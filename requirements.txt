@@ -10,3 +10,6 @@ passlib[bcrypt]
 python-telegram-bot
 requests
 python-dotenv
+plotly
+lxml
+streamlit
