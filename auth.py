@@ -52,3 +52,4 @@ def is_pro(user: dict) -> bool:
 
 def is_entry(user: dict) -> bool:
     return user.get("plan") == "entry"
+
