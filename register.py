@@ -28,21 +28,29 @@ def show_register():
                               placeholder="repeat password",      key="su_confirm")
 
     if st.button("Create Account →", key="signup_btn"):
-        # Validation
-        if not all([username, name, email, phone, password, confirm]):
+        # Διαβάζουμε τις τιμές από session state για να είμαστε σίγουροι
+        u = st.session_state.get("su_username", "").strip()
+        n = st.session_state.get("su_name", "").strip()
+        e = st.session_state.get("su_email", "").strip()
+        p = st.session_state.get("su_phone", "").strip()
+        pw = st.session_state.get("su_pass", "")
+        cp = st.session_state.get("su_confirm", "")
+
+        if not all([u, n, e, p, pw, cp]):
             st.error("Please fill in all fields.")
-        elif password != confirm:
+        elif pw != cp:
             st.error("❌ Passwords do not match.")
-        elif len(password) < 8:
+        elif len(pw) < 8:
             st.error("❌ Password must be at least 8 characters.")
         else:
-            # Αποθήκευση pending user
             st.session_state.pending_user = {
-                "email":    email,
-                "name":     name,
-                "username": username,
-                "phone":    phone,
+                "email":    e,
+                "name":     n,
+                "username": u,
+                "phone":    p,
                 "plan":     "entry",
+                "subscription": "active",
+                "role":     "user",
             }
             st.session_state.active_page = "quiz"
             st.rerun()
