@@ -6,10 +6,13 @@ import streamlit as st
 from auth import login, is_admin, is_pro, is_entry, is_crypto, is_combined, has_active_subscription
 from styles import inject_background
 
+# Wide layout για admin, centered για τους υπόλοιπους
+_is_admin = st.session_state.get("user", {}) and st.session_state.get("user", {}).get("role") == "admin"
+
 st.set_page_config(
     page_title="Orion Signals",
     page_icon="🎯",
-    layout="centered",
+    layout="wide" if _is_admin else "centered",
     initial_sidebar_state="collapsed",
 )
 
