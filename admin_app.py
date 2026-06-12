@@ -97,6 +97,11 @@ def show_admin_dashboard(user):
 
     # Launch Entry
     if admin_view == "entry":
+        col1, col2 = st.columns([1,5])
+        with col1:
+            if st.button("← Admin", key="back_entry"):
+                st.session_state.admin_view = None
+                st.rerun()
         admin_user = {**user, "plan": "entry", "subscription": "active"}
         from entry_app import show_entry_dashboard
         show_entry_dashboard(admin_user)
@@ -104,47 +109,80 @@ def show_admin_dashboard(user):
 
     # Launch Pro
     if admin_view == "pro":
+        col1, col2 = st.columns([1,5])
+        with col1:
+            if st.button("← Admin", key="back_pro"):
+                st.session_state.admin_view = None
+                st.rerun()
         admin_user = {**user, "plan": "pro", "subscription": "active"}
         from pro_app import show_pro_dashboard
         show_pro_dashboard(admin_user)
         return
 
-    # Launch Crypto (placeholder μέχρι να φτιάξουμε)
-    if admin_view == "crypto":
-        st.info("₿ Crypto Dashboard — Coming soon!")
-        st.markdown("""
-        <div style="background:rgba(124,58,237,0.08);border:1px solid rgba(124,58,237,0.2);
-                    border-radius:12px;padding:2rem;text-align:center;margin-top:2rem;">
-            <div style="font-size:3rem;margin-bottom:1rem;">₿</div>
-            <div style="font-family:'Syne',sans-serif;font-size:1.2rem;font-weight:800;color:#fff;margin-bottom:0.5rem;">
-                Crypto Dashboard
-            </div>
-            <div style="color:rgba(255,255,255,0.5);font-size:0.85rem;">
-                Under development. Coming in the next update.
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+    # Launch Crypto Entry
+    if admin_view == "crypto_entry":
+        col1, col2 = st.columns([1,5])
+        with col1:
+            if st.button("← Admin", key="back_crypto_entry"):
+                st.session_state.admin_view = None
+                st.rerun()
+        admin_user = {**user, "plan": "crypto_entry", "subscription": "active"}
+        from crypto_entry_app import show_crypto_entry_dashboard
+        show_crypto_entry_dashboard(admin_user)
         return
 
-    # Launch Combined (placeholder)
+    # Launch Crypto Pro
+    if admin_view == "crypto_pro":
+        col1, col2 = st.columns([1,5])
+        with col1:
+            if st.button("← Admin", key="back_crypto_pro"):
+                st.session_state.admin_view = None
+                st.rerun()
+        admin_user = {**user, "plan": "crypto_pro", "subscription": "active"}
+        from crypto_pro_app import show_crypto_pro_dashboard
+        show_crypto_pro_dashboard(admin_user)
+        return
+
+    # Launch Combined
     if admin_view == "combined":
-        st.info("🌐 Combined Dashboard — Coming soon!")
-        st.markdown("""
-        <div style="background:rgba(124,58,237,0.08);border:1px solid rgba(124,58,237,0.2);
-                    border-radius:12px;padding:2rem;text-align:center;margin-top:2rem;">
-            <div style="font-size:3rem;margin-bottom:1rem;">🌐</div>
-            <div style="font-family:'Syne',sans-serif;font-size:1.2rem;font-weight:800;color:#fff;margin-bottom:0.5rem;">
-                Combined Dashboard
-            </div>
-            <div style="color:rgba(255,255,255,0.5);font-size:0.85rem;">
-                Under development. Coming in the next update.
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        col1, col2 = st.columns([1,5])
+        with col1:
+            if st.button("← Admin", key="back_combined"):
+                st.session_state.admin_view = None
+                st.rerun()
+        admin_user = {**user, "plan": "combined", "subscription": "active"}
+        from combined_app import show_combined_dashboard
+        show_combined_dashboard(admin_user)
         return
 
     # ── MAIN ADMIN PANEL ──
     stats = get_stats()
+
+    # Quick Access
+    st.markdown("#### 🎯 Launch Dashboard")
+    c1,c2,c3,c4,c5 = st.columns(5)
+    with c1:
+        if st.button("📈 Stocks Entry", key="qa_entry", use_container_width=True):
+            st.session_state.admin_view = "entry"
+            st.rerun()
+    with c2:
+        if st.button("⚡ Stocks Pro", key="qa_pro", use_container_width=True):
+            st.session_state.admin_view = "pro"
+            st.rerun()
+    with c3:
+        if st.button("₿ Crypto Entry", key="qa_crypto_entry", use_container_width=True):
+            st.session_state.admin_view = "crypto_entry"
+            st.rerun()
+    with c4:
+        if st.button("🚀 Crypto Pro", key="qa_crypto_pro", use_container_width=True):
+            st.session_state.admin_view = "crypto_pro"
+            st.rerun()
+    with c5:
+        if st.button("🌐 Combined", key="qa_combined", use_container_width=True):
+            st.session_state.admin_view = "combined"
+            st.rerun()
+
+    st.markdown("---")
 
     # Stats row
     c1,c2,c3,c4,c5 = st.columns(5)
