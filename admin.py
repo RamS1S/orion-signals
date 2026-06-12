@@ -153,3 +153,4 @@ def show_admin_dashboard(user):
 
     st.markdown("---")
     st.caption("⚠️ Admin panel — handle with care.")
+
