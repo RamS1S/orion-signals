@@ -61,7 +61,7 @@ def show_pro_dashboard(user):
         show_atr = st.toggle("ATR / SL / Target", value=True)
         show_stoch = st.toggle("Stochastic", value=True)
         st.markdown("---")
-        if st.button("🚪 Logout"):
+        if st.button("🚪 Logout", key="pro_logout"):
             st.session_state.logged_in = False
             st.session_state.user = None
             st.rerun()
