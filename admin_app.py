@@ -183,17 +183,7 @@ def show_admin_dashboard(user):
         if fs != "All": dff = dff[dff["subscription"]==fs]
         if fr != "All": dff = dff[dff["role"]==fr]
 
-        # Color subscription column
-        def color_status(val):
-            if val == "active":
-                return "color: #00C853; font-weight: bold"
-            return "color: #FF3D57; font-weight: bold"
-
-        st.dataframe(
-            dff.style.applymap(color_status, subset=["subscription"]),
-            use_container_width=True,
-            hide_index=True
-        )
+        st.dataframe(dff, use_container_width=True, hide_index=True)
 
         st.caption(f"Showing {len(dff)} of {len(df)} users")
 
