@@ -65,12 +65,15 @@ if st.session_state.logged_in and st.session_state.user:
     if plan == "pro":
         from pro_app import show_pro_dashboard
         show_pro_dashboard(user)
-    elif plan == "crypto":
-        from entry_app import show_entry_dashboard  # placeholder μέχρι να φτιάξουμε crypto
-        show_entry_dashboard(user)
+    elif plan == "crypto_entry":
+        from crypto_entry_app import show_crypto_entry_dashboard
+        show_crypto_entry_dashboard(user)
+    elif plan == "crypto_pro":
+        from crypto_pro_app import show_crypto_pro_dashboard
+        show_crypto_pro_dashboard(user)
     elif plan == "combined":
-        from pro_app import show_pro_dashboard  # placeholder μέχρι να φτιάξουμε combined
-        show_pro_dashboard(user)
+        from combined_app import show_combined_dashboard
+        show_combined_dashboard(user)
     else:
         from entry_app import show_entry_dashboard
         show_entry_dashboard(user)
