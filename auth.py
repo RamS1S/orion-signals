@@ -54,6 +54,26 @@ USERS = {
         "joined":        "01/06/2026",
         "last_login":    None,
     },
+    "crypto_entry@orion.com": {
+        "password":      "crypto123",
+        "plan":          "crypto_entry",
+        "role":          "user",
+        "name":          "Crypto Entry User",
+        "username":      "crypto_entry_user",
+        "subscription":  "active",
+        "joined":        "01/06/2026",
+        "last_login":    None,
+    },
+    "crypto_pro@orion.com": {
+        "password":      "cryptopro123",
+        "plan":          "crypto_pro",
+        "role":          "user",
+        "name":          "Crypto Pro User",
+        "username":      "crypto_pro_user",
+        "subscription":  "active",
+        "joined":        "01/06/2026",
+        "last_login":    None,
+    },
     "combined@orion.com": {
         "password":      "combined123",
         "plan":          "combined",
@@ -77,18 +97,20 @@ USERS = {
 }
 
 PLAN_PRICES = {
-    "entry":    29,
-    "pro":      79,
-    "crypto":   49,
-    "combined": 150,
+    "entry":       29,
+    "pro":         79,
+    "crypto_entry": 39,
+    "crypto_pro":  89,
+    "combined":    150,
 }
 
 PLAN_NAMES = {
-    "entry":    "Entry",
-    "pro":      "Pro",
-    "crypto":   "Crypto",
-    "combined": "Pro + Crypto",
-    "admin":    "Admin",
+    "entry":        "📈 Stocks Entry",
+    "pro":          "⚡ Stocks Pro",
+    "crypto_entry": "₿ Crypto Entry",
+    "crypto_pro":   "🚀 Crypto Pro",
+    "combined":     "🌐 Combined",
+    "admin":        "👑 Admin",
 }
 
 
@@ -171,4 +193,3 @@ def get_stats() -> dict:
         "mrr":          mrr,
         "plan_counts":  plan_counts,
     }
-
