@@ -171,3 +171,4 @@ def get_stats() -> dict:
         "mrr":          mrr,
         "plan_counts":  plan_counts,
     }
+
