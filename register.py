@@ -68,3 +68,4 @@ def show_register():
         © 2026 Orion Signals · Educational tool · Not financial advice
     </div>
     """, unsafe_allow_html=True)
+
