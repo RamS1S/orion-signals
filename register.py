@@ -28,16 +28,24 @@ def show_register():
                               placeholder="repeat password",      key="su_confirm")
 
     if st.button("Create Account →", key="signup_btn"):
-        # Διαβάζουμε τις τιμές από session state για να είμαστε σίγουροι
-        u = st.session_state.get("su_username", "").strip()
-        n = st.session_state.get("su_name", "").strip()
-        e = st.session_state.get("su_email", "").strip()
-        p = st.session_state.get("su_phone", "").strip()
-        pw = st.session_state.get("su_pass", "")
-        cp = st.session_state.get("su_confirm", "")
+        # Διαβάζουμε κατευθείαν από τα input variables
+        u  = (username or "").strip()
+        n  = (name or "").strip()
+        e  = (email or "").strip()
+        p  = (phone or "").strip()
+        pw = password or ""
+        cp = confirm or ""
 
-        if not all([u, n, e, p, pw, cp]):
-            st.error("Please fill in all fields.")
+        missing = []
+        if not u:  missing.append("Username")
+        if not n:  missing.append("Full Name")
+        if not e:  missing.append("Email")
+        if not p:  missing.append("Phone")
+        if not pw: missing.append("Password")
+        if not cp: missing.append("Confirm Password")
+
+        if missing:
+            st.error(f"Please fill in: {', '.join(missing)}")
         elif pw != cp:
             st.error("❌ Passwords do not match.")
         elif len(pw) < 8:
