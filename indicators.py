@@ -51,6 +51,137 @@ def atr_calc(df, period=14):
     tr = pd.concat([h-l,(h-c.shift()).abs(),(l-c.shift()).abs()],axis=1).max(axis=1)
     return tr.rolling(period).mean()
 
+def stochastic(df, k_period=5, smooth=3):
+    """Stochastic %K and %D (fast stochastic, default 5,3,3)."""
+    h = df['High'].rolling(k_period).max()
+    l = df['Low'].rolling(k_period).min()
+    k = 100 * (df['Close'] - l) / (h - l)
+    k = k.rolling(smooth).mean()
+    d = k.rolling(smooth).mean()
+    return k, d
+
+
+# ============================================================
+# FUEL GAUGE — Momentum Exhaustion Detector
+# ============================================================
+# Provider-agnostic: δέχεται μόνο ένα OHLCV DataFrame.
+# Δεν ξέρει αν ήρθε από yfinance, Polygon, Alpaca κλπ.
+# Επιστρέφει 0-100% "καύσιμο" + αναλυτικά σήματα.
+# 100% = υγιής κίνηση με δύναμη. 0% = εξαντλημένη, πιθανή αντιστροφή.
+
+def fuel_gauge(df, lookback=20):
+    """
+    Υπολογίζει πόσο 'καύσιμο' έχει μείνει στην τρέχουσα κίνηση.
+
+    5 σήματα εξάντλησης (όλα από OHLCV):
+      1. RSI Divergence      — τιμή ↑ αλλά RSI ↓
+      2. MACD Divergence     — τιμή ↑ αλλά MACD histogram ↓
+      3. Volume Exhaustion   — άνοδος με λιγότερο όγκο
+      4. Overextension       — τιμή πολύ μακριά από MA20
+      5. Overbought          — RSI > 70 + Stochastic > 80
+
+    Επιστρέφει dict:
+      fuel        : 0-100 (100 = γεμάτο, υγιές)
+      status      : healthy | slowing | exhausted
+      signals     : λίστα (text, triggered) για κάθε σήμα
+    """
+    if df is None or len(df) < 60:
+        return None
+
+    close  = df['Close']
+    volume = df['Volume']
+    current = float(close.iloc[-1])
+
+    # Indicators
+    rsi_s = rsi(close)
+    ml, sl, hist = macd(close)
+    ma20 = close.rolling(20).mean()
+    ma50 = close.rolling(50).mean()
+    k, d = stochastic(df)
+
+    rsi_now   = float(rsi_s.iloc[-1])
+    stoch_now = float(k.iloc[-1]) if not pd.isna(k.iloc[-1]) else 50.0
+
+    # ── Penalty system: ξεκινάμε 100, αφαιρούμε ──
+    fuel = 100.0
+    signals = []
+
+    def sig(text, triggered, penalty):
+        nonlocal fuel
+        signals.append((text, triggered))
+        if triggered:
+            fuel -= penalty
+
+    half = lookback // 2
+
+    # Smoothed peaks (αποφεύγουμε θόρυβο μονής μέρας)
+    close_sm = close.rolling(3).mean()
+    rsi_sm   = rsi_s.rolling(3).mean()
+    hist_sm  = hist.rolling(3).mean()
+
+    recent_price = float(close_sm.tail(half).max())
+    prev_price   = float(close_sm.iloc[-lookback:-half].max())
+    # "Κοντά στο high" = η τιμή κρατιέται ψηλά (δεν χρειάζεται ΝΕΟ high)
+    near_highs = recent_price >= prev_price * 0.985
+
+    # 1. RSI DIVERGENCE — τιμή κρατάει ψηλά, RSI σαφώς χαμηλότερο
+    recent_rsi = float(rsi_sm.tail(half).max())
+    prev_rsi   = float(rsi_sm.iloc[-lookback:-half].max())
+    rsi_div = near_highs and (recent_rsi < prev_rsi - 4)
+    sig("RSI divergence — price holds, momentum fading", rsi_div, 25)
+
+    # 2. MACD DIVERGENCE — τιμή ψηλά, histogram σαφώς χαμηλότερο
+    recent_hist = float(hist_sm.tail(half).max())
+    prev_hist   = float(hist_sm.iloc[-lookback:-half].max())
+    macd_div = near_highs and (recent_hist < prev_hist * 0.7)
+    sig("MACD divergence — weakening thrust", macd_div, 20)
+
+    # 3. VOLUME EXHAUSTION — κίνηση κρατιέται με σαφώς λιγότερο όγκο
+    vol_recent = float(volume.tail(half).mean())
+    vol_prev   = float(volume.iloc[-lookback:-half].mean())
+    vol_exhaust = near_highs and (vol_recent < vol_prev * 0.7)
+    sig("Volume exhaustion — fewer buyers behind move", vol_exhaust, 20)
+
+    # 4. OVEREXTENSION — κλιμακωτή ποινή όσο απομακρύνεται από MA20
+    ma20_now = float(ma20.iloc[-1])
+    ext_pct = (current - ma20_now) / ma20_now * 100
+    # 0 penalty κάτω από 8%, μέχρι 25 penalty στο 20%+
+    ext_penalty = max(0.0, min(25.0, (ext_pct - 8) * 2.0))
+    sig(f"Overextended — {ext_pct:+.1f}% from MA20", ext_penalty > 0, 0)
+    fuel -= ext_penalty
+
+    # 5. OVERBOUGHT — κλιμακωτή ποινή (RSI + Stochastic)
+    # RSI: ξεκινάει στο 68. Πάνω από 80 = ακραίο, βαραίνει πολύ.
+    rsi_pen   = max(0.0, min(25.0, (rsi_now - 68) * 1.4))
+    stoch_pen = max(0.0, min(10.0, (stoch_now - 75) * 0.7))
+    ob_penalty = rsi_pen + stoch_pen
+    sig(f"Overbought — RSI {rsi_now:.0f}, Stoch {stoch_now:.0f}", ob_penalty > 4, 0)
+    fuel -= ob_penalty
+
+    fuel = max(0.0, min(100.0, fuel))
+
+    if fuel >= 65:
+        status = "healthy"
+    elif fuel >= 35:
+        status = "slowing"
+    else:
+        status = "exhausted"
+
+    return {
+        "fuel":       round(fuel),
+        "status":     status,
+        "signals":    signals,
+        "rsi":        rsi_now,
+        "stoch":      stoch_now,
+        "ext_pct":    ext_pct,
+    }
+
+
+def fuel_bar(fuel):
+    """Επιστρέφει visual bar string για το fuel level."""
+    filled = round(fuel / 10)
+    return "█" * filled + "░" * (10 - filled)
+
 
 # ============================================================
 # DATA
