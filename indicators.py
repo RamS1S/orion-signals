@@ -184,8 +184,156 @@ def fuel_bar(fuel):
 
 
 # ============================================================
+# CONFIRMATION ENTRY (+1.5%)
+# ============================================================
+def confirmation_entry(df, threshold=1.5):
+    """
+    Ελέγχει αν η μετοχή έχει 'επιβεβαιώσει' την κίνηση.
+    Logic: έχει ανέβει >= threshold% από το προηγούμενο close
+    (δηλαδή ξεκίνησε όντως να κινείται — όχι πρόωρη είσοδος).
+
+    Επιστρέφει dict:
+      confirmed : True/False
+      move_pct  : πόσο έχει κινηθεί
+      message   : κείμενο για UI
+    """
+    if df is None or len(df) < 2:
+        return {"confirmed": False, "move_pct": 0.0, "message": "Not enough data"}
+
+    prev_close = float(df['Close'].iloc[-2])
+    current    = float(df['Close'].iloc[-1])
+    move_pct = (current - prev_close) / prev_close * 100
+
+    confirmed = move_pct >= threshold
+    if confirmed:
+        msg = f"✅ Confirmed — moved +{move_pct:.1f}% (≥ {threshold}%)"
+    elif move_pct > 0:
+        msg = f"⏳ Not yet — only +{move_pct:.1f}% (needs +{threshold}%)"
+    else:
+        msg = f"⏳ Not confirmed — {move_pct:+.1f}%"
+    return {"confirmed": confirmed, "move_pct": move_pct, "message": msg}
+
+
+# ============================================================
+# EARNINGS CHECK
+# ============================================================
+@st.cache_data(ttl=3600)
+def check_earnings(ticker, days=7):
+    """
+    Ελέγχει αν υπάρχουν earnings στις επόμενες <days> μέρες.
+    Defensive — το yfinance earnings API είναι ασταθές.
+
+    Επιστρέφει dict:
+      has_earnings : True/False/None (None = δεν βρέθηκε info)
+      date         : ημερομηνία ή None
+      days_until   : μέρες ή None
+      message      : κείμενο για UI
+    """
+    from datetime import datetime, timedelta
+    try:
+        tk = yf.Ticker(ticker)
+        cal = None
+        # Δοκιμή 1: get_earnings_dates
+        try:
+            ed = tk.get_earnings_dates(limit=8)
+            if ed is not None and len(ed) > 0:
+                now = datetime.now(ed.index.tz) if ed.index.tz else datetime.now()
+                future = ed[ed.index > now]
+                if len(future) > 0:
+                    next_date = future.index.min()
+                    days_until = (next_date.to_pydatetime().replace(tzinfo=None) - datetime.now()).days
+                    has = 0 <= days_until <= days
+                    return {
+                        "has_earnings": has,
+                        "date": next_date.strftime("%d/%m/%Y"),
+                        "days_until": days_until,
+                        "message": (f"⚠️ Earnings in {days_until} days ({next_date.strftime('%d/%m')})"
+                                    if has else f"✓ No earnings within {days} days"),
+                    }
+        except Exception:
+            pass
+        return {"has_earnings": None, "date": None, "days_until": None,
+                "message": "Earnings date unavailable"}
+    except Exception:
+        return {"has_earnings": None, "date": None, "days_until": None,
+                "message": "Earnings date unavailable"}
+
+
+# ============================================================
+# TARGET PROJECTION
+# ============================================================
+def target_projection(df, analysis=None):
+    """
+    Εκτιμά ρεαλιστικό target ως ΕΥΡΟΣ (όχι ακριβές σημείο).
+    Συνδυάζει 3 πηγές:
+      1. ATR projection   — current + 3×ATR
+      2. Resistance        — πρόσφατο high (52 ημερών)
+      3. Statistical move  — τυπική θετική κίνηση βάσει volatility
+
+    Επιστρέφει dict:
+      low, high     : εύρος target τιμής
+      pct_low, pct_high : % κίνηση
+      note          : κείμενο
+    Πάντα ως ESTIMATE — όχι πρόβλεψη-βεβαιότητα.
+    """
+    if df is None or len(df) < 60:
+        return None
+
+    close = df['Close']
+    current = float(close.iloc[-1])
+    atr = float(atr_calc(df).iloc[-1])
+
+    # 1. ATR-based (3x ATR target)
+    atr_target = current + 3 * atr
+
+    # 2. Resistance (πρόσφατο high)
+    recent_high = float(close.tail(52).max())
+    # Αν ήδη κοντά/πάνω στο high, χρησιμοποίησε ATR
+    resistance = recent_high if recent_high > current * 1.02 else atr_target
+
+    # 3. Statistical (τυπική 20-ημερη θετική διακύμανση)
+    daily_ret = close.pct_change().tail(60)
+    upside_vol = float(daily_ret[daily_ret > 0].std()) if len(daily_ret[daily_ret > 0]) > 0 else 0.01
+    stat_target = current * (1 + upside_vol * (20 ** 0.5) * 1.5)  # ~20 μέρες horizon
+
+    # Συνδυασμός → εύρος
+    targets = sorted([atr_target, resistance, stat_target])
+    low  = targets[0]
+    high = targets[-1]
+    # Αν πολύ κοντά, δώσε λίγο εύρος
+    if high - low < current * 0.02:
+        high = low * 1.03
+
+    pct_low  = (low - current) / current * 100
+    pct_high = (high - current) / current * 100
+
+    return {
+        "low":      low,
+        "high":     high,
+        "pct_low":  pct_low,
+        "pct_high": pct_high,
+        "current":  current,
+        "note":     "Estimate based on ATR + resistance + volatility. Not a guarantee.",
+    }
+
+
+# ============================================================
 # DATA
 # ============================================================
+# ════════════════════════════════════════════════════════════
+#  ⚠️  DATA SOURCE — ΣΗΜΕΙΟ ΑΛΛΑΓΗΣ ΠΑΡΟΧΟΥ
+# ════════════════════════════════════════════════════════════
+#  ΤΩΡΑ: Yahoo Finance (yfinance)
+#  → 2 ενημερώσεις/μέρα (after-market + open), delayed data
+#  → Δωρεάν, κατάλληλο για swing trading
+#
+#  ΓΙΑ LIVE / INTRADAY ΑΡΓΟΤΕΡΑ:
+#  → Άλλαξε ΜΟΝΟ τη load_data() παρακάτω
+#  → π.χ. Polygon.io / Alpaca / Finnhub / Tradier
+#  → Όλα τα υπόλοιπα (fuel_gauge, picks, backtest, target)
+#    μένουν ΙΔΙΑ — αρκεί να επιστρέφεις DataFrame με στήλες:
+#    Open, High, Low, Close, Volume  (index = ημερομηνίες)
+# ════════════════════════════════════════════════════════════
 @st.cache_data(ttl=600)
 def load_data(ticker, period="1y"):
     df = yf.download(ticker, period=period, progress=False, auto_adjust=True)
