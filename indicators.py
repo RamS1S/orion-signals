@@ -513,7 +513,7 @@ def run_backtest(df, target_pct=10, horizon=30):
 # ============================================================
 # CHART
 # ============================================================
-def create_chart(df, a):
+def create_chart(df, a, height=680):
     fig = make_subplots(rows=3,cols=1,shared_xaxes=True,vertical_spacing=0.03,
                         row_heights=[0.6,0.2,0.2],
                         subplot_titles=("Price + MAs + Bollinger","RSI","MACD"))
@@ -540,7 +540,7 @@ def create_chart(df, a):
     hist=a['macd_line']-a['signal_line']
     fig.add_trace(go.Bar(x=df.index,y=hist,name='Hist',
                           marker_color=['#00C853' if v>0 else '#FF3D57' for v in hist],showlegend=False),row=3,col=1)
-    fig.update_layout(height=680,paper_bgcolor='rgba(0,0,0,0)',plot_bgcolor='rgba(0,0,0,0)',
+    fig.update_layout(height=height,paper_bgcolor='rgba(0,0,0,0)',plot_bgcolor='rgba(0,0,0,0)',
                       xaxis_rangeslider_visible=False,hovermode='x unified',
                       margin=dict(t=40,b=20),font=dict(color='#E2E8F0'),
                       legend=dict(bgcolor='rgba(0,0,0,0)'))
@@ -599,3 +599,4 @@ def inject_css():
     .pnl-neg{color:#FF3D57;font-weight:700}
     </style>
     """, unsafe_allow_html=True)
+
