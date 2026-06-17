@@ -31,7 +31,7 @@ from indicators import (
 # TODAY'S PICKS — auto scan + rank
 # ============================================================
 @st.cache_data(ttl=1800, show_spinner=False)
-def scan_todays_picks(universe="dow", top_n=8, min_score=20):
+def scan_todays_picks(universe="dow", top_n=8, min_score=10):
     """
     Σκανάρει το universe, βαθμολογεί, και επιστρέφει τα top picks
     με fuel gauge + target. Cached 30 λεπτά (1 scan για όλους).
@@ -42,12 +42,18 @@ def scan_todays_picks(universe="dow", top_n=8, min_score=20):
         futures = {ex.submit(screen_ticker, t): t for t in tickers}
         for f in as_completed(futures):
             r = f.result()
-            if r and r["combined"] >= min_score and r["verdict"] in ("BUY", "STRONG BUY"):
+            if r:
                 results.append(r)
-    results.sort(key=lambda x: x["combined"], reverse=True)
-    top = results[:top_n]
 
-    # Εμπλούτισε με fuel + target (χρειάζεται ξανά τα δεδομένα)
+    # Ταξινόμηση όλων με score, κρατάμε τα top με θετικό verdict ΑΝ υπάρχουν
+    results.sort(key=lambda x: x["combined"], reverse=True)
+    buys = [r for r in results if r["verdict"] in ("BUY", "STRONG BUY") and r["combined"] >= min_score]
+
+    # Αν δεν υπάρχουν καθαρά buys, δείξε τα top scored ούτως ή άλλως (best available)
+    pool = buys if buys else results[:top_n]
+    top = pool[:top_n]
+
+    # Εμπλούτισε με fuel + target
     enriched = []
     for r in top:
         df = load_data(r["ticker"], "6mo")
@@ -264,18 +270,29 @@ def show_pro_dashboard(user):
                 picks = scan_todays_picks(universe=uni)
 
             if not picks:
-                st.info("No strong picks right now. Try another universe or check back later.")
+                st.info("Scanning returned nothing — the market data source may be rate-limited. Press Refresh in a moment.")
             else:
-                st.caption(f"Found {len(picks)} strong setups")
+                buys = [p for p in picks if p["verdict"] in ("BUY", "STRONG BUY")]
+                if buys:
+                    st.caption(f"Found {len(buys)} strong setups")
+                else:
+                    st.caption("No strong buys today — showing best-scored stocks")
                 for i, p in enumerate(picks):
                     render_pick_card(p, i)
 
         # ── LEFT: manual analysis ──
         with left:
-            sel = st.session_state.get("pro_selected_ticker", "AAPL")
+            # Default ticker: ό,τι διάλεξε από picks, αλλιώς ό,τι έγραψε, αλλιώς AAPL
+            if "pro_selected_ticker" in st.session_state:
+                default_ticker = st.session_state.pop("pro_selected_ticker")
+            else:
+                default_ticker = st.session_state.get("pro_manual_ticker", "AAPL")
+
             c1, c2 = st.columns([2, 1])
-            ticker = c1.text_input("Analyze any ticker", value=sel, key="pro_manual_ticker").upper()
-            period = c2.selectbox("Period", ["6mo", "1y", "2y", "5y"], index=1, key="pro_period")
+            ticker = c1.text_input("Analyze any ticker", value=default_ticker,
+                                   key="pro_manual_ticker").upper().strip()
+            period = c2.selectbox("Period", ["1mo", "3mo", "6mo", "1y", "2y", "5y"],
+                                  index=3, key="pro_period")
 
             # User-controlled toggles
             st.markdown('<div class="toggle-row">', unsafe_allow_html=True)
