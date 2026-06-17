@@ -117,7 +117,8 @@ def render_pick_card(p, idx):
     """, unsafe_allow_html=True)
 
     if st.button(f"🔍 Analyze {p['ticker']}", key=f"pick_analyze_{idx}", use_container_width=True):
-        st.session_state.pro_selected_ticker = p["ticker"]
+        st.session_state.pro_picked = p["ticker"]
+        st.session_state.pro_last_scanned = p["ticker"]
         st.rerun()
 
 
@@ -282,15 +283,13 @@ def show_pro_dashboard(user):
 
         # ── LEFT: manual analysis ──
         with left:
-            # Default ticker: ό,τι διάλεξε από picks, αλλιώς ό,τι έγραψε, αλλιώς AAPL
-            if "pro_selected_ticker" in st.session_state:
-                default_ticker = st.session_state.pop("pro_selected_ticker")
-            else:
-                default_ticker = st.session_state.get("pro_manual_ticker", "AAPL")
+            # Αν διάλεξε από picks, γέμισε το πεδίο μ' αυτό (μία φορά)
+            if "pro_picked" in st.session_state:
+                st.session_state.pro_manual_ticker = st.session_state.pop("pro_picked")
 
             c1, c2 = st.columns([2, 1])
-            ticker = c1.text_input("Analyze any ticker", value=default_ticker,
-                                   key="pro_manual_ticker").upper().strip()
+            ticker = c1.text_input("Analyze any ticker", key="pro_manual_ticker",
+                                   placeholder="e.g. GME").upper().strip()
             period = c2.selectbox("Period", ["1mo", "3mo", "6mo", "1y", "2y", "5y"],
                                   index=3, key="pro_period")
 
@@ -298,12 +297,16 @@ def show_pro_dashboard(user):
             st.markdown('<div class="toggle-row">', unsafe_allow_html=True)
             tc1, tc2 = st.columns(2)
             use_confirmation = tc1.checkbox("✅ Confirmation entry (+1.5%)", value=False,
-                                            help="Show whether the stock has already started moving (+1.5%) before you enter")
+                                            help="Shows whether the stock has already started moving (+1.5%) before you enter — avoids premature entries")
             use_earnings = tc2.checkbox("📅 Check earnings", value=False,
-                                        help="Warn if earnings are within the next 7 days")
+                                        help="Warns if earnings are within the next 7 days — earnings can cause unpredictable swings")
             st.markdown('</div>', unsafe_allow_html=True)
 
-            if ticker:
+            # Scan button (χειροκίνητο)
+            do_scan = st.button("🔍 Scan this ticker", key="manual_scan", use_container_width=True)
+
+            if ticker and (do_scan or st.session_state.get("pro_last_scanned") == ticker):
+                st.session_state.pro_last_scanned = ticker
                 with st.spinner(f"Analyzing {ticker}..."):
                     df = load_data(ticker, period)
                 if df is None:
@@ -393,20 +396,32 @@ def show_pro_dashboard(user):
                         else:
                             st.caption(ern["message"])
 
-                    # Chart
-                    st.plotly_chart(create_chart(df, a), use_container_width=True)
+                    # Αποθήκευση για full-width chart κάτω από τα columns
+                    st.session_state.pro_chart_data = {
+                        "df": df, "a": a, "ticker": ticker,
+                        "entry": entry, "sl": sl, "tgt": tgt,
+                    }
 
-                    # One-click add to portfolio
-                    if st.button(f"➕ Add {ticker} to Portfolio", key="add_from_analysis"):
-                        if "portfolio_pro" not in st.session_state:
-                            st.session_state.portfolio_pro = []
-                        st.session_state.portfolio_pro.append({
-                            'ticker': ticker, 'entry': round(entry, 2), 'shares': 10,
-                            'sl': round(sl, 2), 'target': round(tgt, 2),
-                            'status': 'open', 'date_in': datetime.now().strftime("%d/%m/%Y"),
-                            'date_out': None, 'exit_price': None, 'pnl': None
-                        })
-                        st.success(f"✅ {ticker} added to portfolio (10 shares @ ${entry:.2f})")
+    # ── FULL-WIDTH CHART (έξω από τα columns) ──
+    chart_data = st.session_state.get("pro_chart_data")
+    if chart_data is not None:
+        st.markdown("---")
+        st.markdown(f"#### 📈 {chart_data['ticker']} — Full Chart")
+        st.plotly_chart(create_chart(chart_data["df"], chart_data["a"], height=820),
+                        use_container_width=True,
+                        config={"displayModeBar": True, "scrollZoom": True,
+                                "displaylogo": False})
+
+        if st.button(f"➕ Add {chart_data['ticker']} to Portfolio", key="add_from_analysis"):
+            if "portfolio_pro" not in st.session_state:
+                st.session_state.portfolio_pro = []
+            st.session_state.portfolio_pro.append({
+                'ticker': chart_data['ticker'], 'entry': round(chart_data['entry'], 2),
+                'shares': 10, 'sl': round(chart_data['sl'], 2), 'target': round(chart_data['tgt'], 2),
+                'status': 'open', 'date_in': datetime.now().strftime("%d/%m/%Y"),
+                'date_out': None, 'exit_price': None, 'pnl': None
+            })
+            st.success(f"✅ {chart_data['ticker']} added to portfolio (10 shares @ ${chart_data['entry']:.2f})")
 
     # ════════════════════════════════════════════════════
     # TAB 2 — BACKTEST
