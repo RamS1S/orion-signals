@@ -24,6 +24,7 @@ from indicators import (
     screen_ticker, run_backtest, get_dow, get_nasdaq100, get_sp500,
     atr_calc, fuel_gauge, fuel_bar, confirmation_entry,
     check_earnings, target_projection,
+    ema, obv, climax_volume, relative_strength,
 )
 
 
@@ -326,54 +327,69 @@ def show_pro_dashboard(user):
                     m3.metric("Momentum", f"{a['mom_score']:+.1f}")
                     m4.metric("Technical", f"{a['tech_score']:+.1f}")
 
-                    # Fuel gauge
-                    fg = fuel_gauge(df)
-                    if fg:
-                        fcol = ("#00C853" if fg["fuel"] >= 65 else
-                                "#F59E0B" if fg["fuel"] >= 35 else "#FF3D57")
+                    is_bullish = a['verdict'] in ("BUY", "STRONG BUY")
+
+                    # Fuel gauge — ΜΟΝΟ σε bullish setup (μετράει ανοδική εξάντληση)
+                    if is_bullish:
+                        fg = fuel_gauge(df)
+                        if fg:
+                            fcol = ("#00C853" if fg["fuel"] >= 65 else
+                                    "#F59E0B" if fg["fuel"] >= 35 else "#FF3D57")
+                            st.markdown(f"""
+                            <div style="background:rgba(255,255,255,0.02);border:1px solid rgba(124,58,237,0.2);
+                                        border-radius:10px;padding:0.85rem 1rem;margin:0.75rem 0;">
+                                <div style="display:flex;justify-content:space-between;align-items:center;">
+                                    <span style="font-family:'Syne';font-weight:700;color:#fff;">🔋 Fuel Gauge</span>
+                                    <span style="color:{fcol};font-weight:800;font-size:1.1rem;">{fg['fuel']}%</span>
+                                </div>
+                                <div style="font-family:monospace;font-size:1.1rem;color:{fcol};letter-spacing:-1px;margin:0.3rem 0;">
+                                    {fuel_bar(fg['fuel'])}
+                                </div>
+                                <div style="font-size:0.75rem;color:rgba(255,255,255,0.5);">
+                                    Status: {fg['status']} — {'healthy momentum, room to run' if fg['status']=='healthy' else 'losing steam, watch closely' if fg['status']=='slowing' else 'exhausted, reversal risk'}
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            triggered = [t for t, tr in fg["signals"] if tr]
+                            if triggered:
+                                st.caption("⚠️ Exhaustion signals: " + " · ".join(triggered))
+                    else:
                         st.markdown(f"""
-                        <div style="background:rgba(255,255,255,0.02);border:1px solid rgba(124,58,237,0.2);
-                                    border-radius:10px;padding:0.85rem 1rem;margin:0.75rem 0;">
-                            <div style="display:flex;justify-content:space-between;align-items:center;">
-                                <span style="font-family:'Syne';font-weight:700;color:#fff;">🔋 Fuel Gauge</span>
-                                <span style="color:{fcol};font-weight:800;font-size:1.1rem;">{fg['fuel']}%</span>
-                            </div>
-                            <div style="font-family:monospace;font-size:1.1rem;color:{fcol};letter-spacing:-1px;margin:0.3rem 0;">
-                                {fuel_bar(fg['fuel'])}
-                            </div>
-                            <div style="font-size:0.75rem;color:rgba(255,255,255,0.5);">
-                                Status: {fg['status']} — {'healthy momentum' if fg['status']=='healthy' else 'losing steam, watch closely' if fg['status']=='slowing' else 'exhausted, reversal risk'}
-                            </div>
+                        <div style="background:rgba(255,61,87,0.05);border:1px solid rgba(255,61,87,0.2);
+                                    border-radius:10px;padding:0.85rem 1rem;margin:0.75rem 0;font-size:0.82rem;color:rgba(255,255,255,0.6);">
+                            🔋 <strong style="color:#FF8A95;">Fuel Gauge n/a</strong> —
+                            this is a <strong>{a['verdict']}</strong> setup. The fuel gauge measures
+                            upward momentum exhaustion and only applies to bullish (BUY) signals.
                         </div>
                         """, unsafe_allow_html=True)
-                        # Fuel signals
-                        triggered = [t for t, tr in fg["signals"] if tr]
-                        if triggered:
-                            st.caption("⚠️ Exhaustion signals: " + " · ".join(triggered))
 
-                    # ATR levels
+                    # ATR levels + target — ΜΟΝΟ σε bullish
                     atr_v = float(atr_calc(df).iloc[-1])
                     entry = a['current'] * 1.015
                     sl = entry - 1.5 * atr_v
                     tgt = entry + 3 * atr_v
                     rr = (tgt - entry) / (entry - sl) if (entry - sl) > 0 else 0
-                    p1, p2, p3, p4 = st.columns(4)
-                    p1.metric("Entry (+1.5%)", f"${entry:.2f}")
-                    p2.metric("Stop Loss", f"${sl:.2f}")
-                    p3.metric("Target", f"${tgt:.2f}")
-                    p4.metric("Risk/Reward", f"1:{rr:.1f}")
 
-                    # Target projection
-                    tp = target_projection(df)
-                    if tp:
-                        st.markdown(f"""
-                        <div style="background:rgba(0,200,83,0.05);border:1px solid rgba(0,200,83,0.2);
-                                    border-radius:10px;padding:0.7rem 1rem;margin:0.5rem 0;font-size:0.82rem;">
-                            🎯 <strong style="color:#00C853;">Est. target ${tp['low']:.2f}–${tp['high']:.2f}</strong>
-                            <span style="color:rgba(255,255,255,0.5);">({tp['pct_low']:+.1f}% to {tp['pct_high']:+.1f}%)</span><br>
-                            <span style="font-size:0.7rem;color:rgba(255,255,255,0.35);">Estimate — not a guarantee. Based on ATR, resistance & volatility.</span>
-                        </div>
-                        """, unsafe_allow_html=True)
+                    if is_bullish:
+                        p1, p2, p3, p4 = st.columns(4)
+                        p1.metric("Entry (+1.5%)", f"${entry:.2f}")
+                        p2.metric("Stop Loss", f"${sl:.2f}")
+                        p3.metric("Target", f"${tgt:.2f}")
+                        p4.metric("Risk/Reward", f"1:{rr:.1f}")
+
+                        tp = target_projection(df)
+                        if tp:
+                            st.markdown(f"""
+                            <div style="background:rgba(0,200,83,0.05);border:1px solid rgba(0,200,83,0.2);
+                                        border-radius:10px;padding:0.7rem 1rem;margin:0.5rem 0;font-size:0.82rem;">
+                                🎯 <strong style="color:#00C853;">Est. target ${tp['low']:.2f}–${tp['high']:.2f}</strong>
+                                <span style="color:rgba(255,255,255,0.5);">({tp['pct_low']:+.1f}% to {tp['pct_high']:+.1f}%)</span><br>
+                                <span style="font-size:0.7rem;color:rgba(255,255,255,0.35);">Estimate — not a guarantee. Based on ATR, resistance & volatility.</span>
+                            </div>
+                            """, unsafe_allow_html=True)
+                    else:
+                        st.info(f"📉 {a['verdict']} setup — entry, stop loss and target are shown only "
+                                f"for bullish (BUY) signals. This stock is currently weak.")
 
                     # Confirmation entry (user toggle)
                     if use_confirmation:
@@ -395,6 +411,47 @@ def show_pro_dashboard(user):
                             st.success(ern["message"])
                         else:
                             st.caption(ern["message"])
+
+                    # ── EXTRA INDICATORS (expandable) ──
+                    with st.expander("📐 Extra indicators (EMA · OBV · Climax · Relative Strength)"):
+                        e9  = float(ema(df['Close'], 9).iloc[-1])
+                        e21 = float(ema(df['Close'], 21).iloc[-1])
+                        cur = a['current']
+                        ec1, ec2, ec3 = st.columns(3)
+                        ec1.metric("EMA 9", f"${e9:.2f}",
+                                   "above" if cur > e9 else "below")
+                        ec2.metric("EMA 21", f"${e21:.2f}",
+                                   "above" if cur > e21 else "below")
+                        ema_cross = "🟢 EMA9 > EMA21 (bullish)" if e9 > e21 else "🔴 EMA9 < EMA21 (bearish)"
+                        ec3.markdown(f"**Cross**\n\n{ema_cross}")
+
+                        # OBV trend
+                        o = obv(df)
+                        obv_rising = float(o.iloc[-1]) > float(o.iloc[-20]) if len(o) >= 20 else None
+                        # Climax volume
+                        cv = climax_volume(df)
+                        # Relative Strength vs SPY
+                        spy = load_data("SPY", "6mo")
+                        rs = relative_strength(df, spy) if spy is not None else None
+
+                        st.markdown("---")
+                        oc1, oc2 = st.columns(2)
+                        with oc1:
+                            if obv_rising is not None:
+                                st.markdown(f"**OBV (volume flow):** "
+                                            f"{'🟢 rising — buyers in control' if obv_rising else '🔴 falling — sellers in control'}")
+                            if cv["detected"]:
+                                ct = "⚠️ Buying climax (possible top)" if cv["type"] == "buying_climax" else "⚠️ Selling climax (possible bottom)"
+                                st.markdown(f"**Climax volume:** {ct} — {cv['ratio']:.1f}x avg")
+                            else:
+                                st.markdown(f"**Climax volume:** none ({cv['ratio']:.1f}x avg)")
+                        with oc2:
+                            if rs:
+                                rs_txt = ("🟢 Outperforming SPY" if rs["outperform"] else "🔴 Lagging SPY")
+                                st.markdown(f"**Relative Strength:** {rs_txt}")
+                                st.caption(f"Stock {rs['stock_ret']:+.1f}% vs SPY {rs['bench_ret']:+.1f}% (3mo) · RS ratio {rs['rs_ratio']:.2f}")
+                            else:
+                                st.caption("Relative Strength unavailable")
 
                     # Αποθήκευση για full-width chart κάτω από τα columns
                     st.session_state.pro_chart_data = {
