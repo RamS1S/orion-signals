@@ -61,6 +61,91 @@ def stochastic(df, k_period=5, smooth=3):
     return k, d
 
 
+def ema(series, period):
+    """Exponential Moving Average."""
+    return series.ewm(span=period, adjust=False).mean()
+
+
+def obv(df):
+    """
+    On-Balance Volume — μετράει αν ο όγκος 'μπαίνει' ή 'βγαίνει'.
+    Ανεβαίνον OBV = αγοραστική πίεση επιβεβαιώνει την άνοδο.
+    """
+    close = df['Close']
+    vol = df['Volume']
+    direction = close.diff().apply(lambda x: 1 if x > 0 else (-1 if x < 0 else 0))
+    return (direction * vol).cumsum()
+
+
+def obv_trend(df, lookback=20):
+    """Επιστρέφει αν το OBV ανεβαίνει (bullish) ή πέφτει (bearish)."""
+    o = obv(df)
+    if len(o) < lookback:
+        return "neutral"
+    recent = float(o.iloc[-1])
+    past = float(o.iloc[-lookback])
+    if recent > past * 1.0:
+        return "rising" if recent > past else "falling"
+    return "rising" if recent > past else "falling"
+
+
+def climax_volume(df, lookback=50, spike_mult=2.5):
+    """
+    Climax Volume — εντοπίζει ακραίο spike όγκου που συχνά
+    σηματοδοτεί εξάντληση/αντιστροφή (buying/selling climax).
+
+    Επιστρέφει dict:
+      detected : True/False
+      ratio    : πόσες φορές πάνω από τον μέσο όρο
+      type     : 'buying_climax' | 'selling_climax' | None
+    """
+    if df is None or len(df) < lookback:
+        return {"detected": False, "ratio": 0.0, "type": None}
+    vol = df['Volume']
+    close = df['Close']
+    avg_vol = float(vol.tail(lookback).mean())
+    last_vol = float(vol.iloc[-1])
+    ratio = last_vol / avg_vol if avg_vol > 0 else 0
+    detected = ratio >= spike_mult
+    ctype = None
+    if detected:
+        # Πάνω σε άνοδο = buying climax (πιθανό top)
+        # Πάνω σε πτώση = selling climax (πιθανό bottom)
+        day_change = float(close.iloc[-1] - close.iloc[-2]) if len(close) >= 2 else 0
+        ctype = "buying_climax" if day_change > 0 else "selling_climax"
+    return {"detected": detected, "ratio": ratio, "type": ctype}
+
+
+def relative_strength(df_stock, df_bench, lookback=63):
+    """
+    Relative Strength vs benchmark (SPY/QQQ).
+    Συγκρίνει την απόδοση της μετοχής με τον δείκτη.
+
+    Επιστρέφει dict:
+      rs_ratio    : >1 = ισχυρότερη από την αγορά
+      outperform  : True/False
+      stock_ret   : απόδοση μετοχής %
+      bench_ret   : απόδοση benchmark %
+    """
+    if df_stock is None or df_bench is None:
+        return None
+    if len(df_stock) < lookback or len(df_bench) < lookback:
+        return None
+    s_now = float(df_stock['Close'].iloc[-1])
+    s_past = float(df_stock['Close'].iloc[-lookback])
+    b_now = float(df_bench['Close'].iloc[-1])
+    b_past = float(df_bench['Close'].iloc[-lookback])
+    stock_ret = (s_now - s_past) / s_past * 100
+    bench_ret = (b_now - b_past) / b_past * 100
+    rs_ratio = (1 + stock_ret/100) / (1 + bench_ret/100) if b_past > 0 else 1
+    return {
+        "rs_ratio":   rs_ratio,
+        "outperform": stock_ret > bench_ret,
+        "stock_ret":  stock_ret,
+        "bench_ret":  bench_ret,
+    }
+
+
 # ============================================================
 # FUEL GAUGE — Momentum Exhaustion Detector
 # ============================================================
@@ -599,4 +684,3 @@ def inject_css():
     .pnl-neg{color:#FF3D57;font-weight:700}
     </style>
     """, unsafe_allow_html=True)
-
