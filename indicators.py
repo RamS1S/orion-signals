@@ -1074,3 +1074,4 @@ def inject_css():
     .pnl-neg{color:#FF3D57;font-weight:700}
     </style>
     """, unsafe_allow_html=True)
+
