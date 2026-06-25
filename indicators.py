@@ -1235,3 +1235,4 @@ def screen_ticker_v2(ticker, include_sector=False):
         }
     except Exception:
         return None
+
