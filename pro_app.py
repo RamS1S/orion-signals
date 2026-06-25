@@ -72,10 +72,10 @@ def scan_todays_picks(universe="dow", top_n=8, min_score=10):
             "fuel":     fg["fuel"] if fg else None,
             "fuel_status": fg["status"] if fg else None,
             "entry":    entry, "sl": sl, "target": tgt, "rr": rr,
-            "tgt_low":  tp["low"] if tp else None,
-            "tgt_high": tp["high"] if tp else None,
-            "tgt_pct_low":  tp["pct_low"] if tp else None,
-            "tgt_pct_high": tp["pct_high"] if tp else None,
+            "tgt_low":  tp["target_1"] if tp else None,
+            "tgt_high": tp["target_2"] if tp else None,
+            "tgt_pct_low":  tp["pct_t1"] if tp else None,
+            "tgt_pct_high": tp["pct_t2"] if tp else None,
         })
     return enriched
 
@@ -382,8 +382,8 @@ def show_pro_dashboard(user):
                             st.markdown(f"""
                             <div style="background:rgba(0,200,83,0.05);border:1px solid rgba(0,200,83,0.2);
                                         border-radius:10px;padding:0.7rem 1rem;margin:0.5rem 0;font-size:0.82rem;">
-                                🎯 <strong style="color:#00C853;">Est. target ${tp['low']:.2f}–${tp['high']:.2f}</strong>
-                                <span style="color:rgba(255,255,255,0.5);">({tp['pct_low']:+.1f}% to {tp['pct_high']:+.1f}%)</span><br>
+                                🎯 <strong style="color:#00C853;">Est. target ${tp['target_1']:.2f}–${tp['target_2']:.2f}</strong>
+                                <span style="color:rgba(255,255,255,0.5);">({tp['pct_t1']:+.1f}% to {tp['pct_t2']:+.1f}%)</span><br>
                                 <span style="font-size:0.7rem;color:rgba(255,255,255,0.35);">Estimate — not a guarantee. Based on ATR, resistance & volatility.</span>
                             </div>
                             """, unsafe_allow_html=True)
