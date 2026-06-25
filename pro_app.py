@@ -27,6 +27,7 @@ from indicators import (
     atr_calc, fuel_gauge, fuel_bar, confirmation_entry,
     check_earnings, target_projection,
     ema, obv, climax_volume, relative_strength,
+    short_setup, bearish_fuel_gauge,
 )
 
 
@@ -454,8 +455,56 @@ def show_pro_dashboard(user):
                             </div>
                             """, unsafe_allow_html=True)
                     else:
-                        st.info(f"📉 {a['verdict']} setup — entry, stop loss and target are shown only "
-                                f"for bullish (BUY) signals. This stock is currently weak.")
+                        # SHORT SETUP για SELL/STRONG SELL
+                        if a['verdict'] in ("SELL", "STRONG SELL"):
+                            ss = short_setup(df)
+                            bf = bearish_fuel_gauge(df)
+                            if ss:
+                                st.markdown("""
+                                <div style="background:rgba(255,61,87,0.05);border:1px solid rgba(255,61,87,0.25);
+                                    border-radius:10px;padding:0.85rem 1rem;margin:0.75rem 0;">
+                                    <div style="font-family:Syne,sans-serif;font-weight:700;color:#FF3D57;margin-bottom:0.5rem;">
+                                        🔻 Short Setup
+                                    </div>
+                                    <div style="font-size:0.7rem;color:rgba(255,100,100,0.6);margin-bottom:0.5rem;">
+                                        ⚠️ Short selling involves unlimited risk. Only for experienced traders with margin accounts.
+                                    </div>
+                                </div>
+                                """, unsafe_allow_html=True)
+                                p1, p2, p3, p4 = st.columns(4)
+                                p1.metric("Short Entry", f"${ss['entry']:.2f}")
+                                p2.metric("Stop Loss 🛑", f"${ss['stop_loss']:.2f}",
+                                          f"{ss['pct_sl']:+.1f}%", delta_color="inverse")
+                                p3.metric("Target 🎯", f"${ss['target_1']:.2f}",
+                                          f"{ss['pct_t1']:+.1f}%")
+                                p4.metric("R/R Ratio", f"1:{ss['rr_ratio']:.1f}")
+                                st.caption(f"Target 2 (3:1): ${ss['target_2']:.2f} ({ss['pct_t2']:+.1f}%)")
+
+                            if bf:
+                                fcol = ("#FF3D57" if bf["fuel"] >= 65 else
+                                        "#F59E0B" if bf["fuel"] >= 35 else "#00C853")
+                                status_txt = {
+                                    "strong": "Downtrend has momentum — room to fall",
+                                    "weakening": "Sell pressure weakening — watch for bounce",
+                                    "exhausted": "⚠️ Downtrend exhausted — possible reversal"
+                                }.get(bf["status"], "")
+                                filled = round(bf["fuel"] / 10)
+                                bar = "█" * filled + "░" * (10 - filled)
+                                st.markdown(
+                                    f'<div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,61,87,0.2);' +
+                                    f'border-radius:10px;padding:0.85rem 1rem;margin:0.5rem 0;">' +
+                                    f'<div style="display:flex;justify-content:space-between;">' +
+                                    f'<span style="font-family:Syne;font-weight:700;color:#fff;">🔋 Bearish Fuel</span>' +
+                                    f'<span style="color:{fcol};font-weight:800;font-size:1.1rem;">{bf["fuel"]}%</span></div>' +
+                                    f'<div style="font-family:monospace;font-size:1.1rem;color:{fcol};letter-spacing:-1px;margin:0.3rem 0;">{bar}</div>' +
+                                    f'<div style="font-size:0.75rem;color:rgba(255,255,255,0.5);">{status_txt}</div></div>',
+                                    unsafe_allow_html=True
+                                )
+                                triggered = [t for t, tr in bf["signals"] if tr]
+                                if triggered:
+                                    st.caption("⚠️ Reversal warnings: " + " · ".join(triggered))
+                        else:
+                            st.info(f"📉 {a['verdict']} setup — entry levels shown only for BUY/SELL signals.")
 
                     # Confirmation entry (user toggle)
                     if use_confirmation:
