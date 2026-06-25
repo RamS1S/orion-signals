@@ -524,3 +524,4 @@ def show_pro_dashboard(user):
 
     st.markdown("---")
     st.caption("⚠️ Educational tool only. Not financial advice. Estimates and backtests do not guarantee future results.")
+
