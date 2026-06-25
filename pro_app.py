@@ -49,19 +49,13 @@ def scan_todays_picks(universe="dow", top_n=8, min_score=10):
                 results.append(r)
 
     results.sort(key=lambda x: x["combined"], reverse=True)
-
-    # BUY signals
     buys = [r for r in results if r["verdict"] in ("BUY", "STRONG BUY") and r["combined"] >= min_score]
-    pool = buys if buys else [r for r in results if r["verdict"] not in ("SELL", "STRONG SELL")][:top_n]
-    top_buys = pool[:top_n]
+    sells = sorted([r for r in results if r["verdict"] in ("SELL", "STRONG SELL")], key=lambda x: x["combined"])[:top_n]
+    pool = buys if buys else [r for r in results if r["verdict"] not in ("SELL","STRONG SELL")][:top_n]
+    top = pool[:top_n]
 
-    # SELL signals (ξεχωριστά)
-    sells = [r for r in results if r["verdict"] in ("SELL", "STRONG SELL")]
-    sells = sorted(sells, key=lambda x: x["combined"])[:top_n]
-
-    # Εμπλούτισε BUY με fuel + target
-    enriched_buys = []
-    for r in top_buys:
+    enriched = []
+    for r in top:
         df = load_data(r["ticker"], "6mo")
         if df is None or len(df) < 60:
             continue
@@ -72,7 +66,7 @@ def scan_todays_picks(universe="dow", top_n=8, min_score=10):
         sl = entry - 1.5 * atr
         tgt = entry + 3 * atr
         rr = (tgt - entry) / (entry - sl) if (entry - sl) > 0 else 0
-        enriched_buys.append({
+        enriched.append({
             **r,
             "fuel": fg["fuel"] if fg else None,
             "fuel_status": fg["status"] if fg else None,
@@ -82,8 +76,7 @@ def scan_todays_picks(universe="dow", top_n=8, min_score=10):
             "tgt_pct_low": tp["pct_t1"] if tp else None,
             "tgt_pct_high": tp["pct_t2"] if tp else None,
         })
-
-    return {"buys": enriched_buys, "sells": sells}
+    return {"buys": enriched, "sells": sells}
 
 
 def render_pick_card(p, idx):
@@ -129,37 +122,34 @@ def render_pick_card(p, idx):
         st.rerun()
 
 
-
 def render_sell_card(p, idx):
     """Card για SELL/STRONG SELL signals."""
     verdict_color = "#FF3D57" if "STRONG" in p["verdict"] else "#FF8A95"
-    sector_txt = f"<span style='color:rgba(255,255,255,0.4);font-size:0.68rem'>{p.get('sector','')}</span>" if p.get('sector') and p.get('sector') != 'Unknown' else ""
+    ticker    = p["ticker"]
+    price     = p["price"]
+    combined  = p["combined"]
+    rsi_val   = p["rsi"]
+    ret_1m    = p["ret_1m"]
+    ret_3m    = p["ret_3m"]
+    verdict   = p["verdict"]
+    above_ma200 = p.get("above_ma200", False)
+    sector    = p.get("sector", "")
+    ma200_txt = "MA200 ✅" if above_ma200 else "MA200 ❌"
+    sector_part = f" · {sector}" if sector and sector != "Unknown" else ""
 
-    st.markdown(f"""
-    <div style="background:rgba(255,61,87,0.04);border:1px solid rgba(255,61,87,0.25);
-        border-radius:12px;padding:0.85rem 1rem;margin-bottom:0.4rem;">
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-            <span style="font-family:'Syne',sans-serif;font-size:1.1rem;font-weight:800;color:#fff;">{p['ticker']}</span>
-            <span style="font-size:0.7rem;font-weight:700;color:{verdict_color};">{p['verdict']}</span>
-        </div>
-        <div style="font-size:0.85rem;color:rgba(255,255,255,0.7);margin:0.2rem 0;">
-            ${p['price']:.2f} · Score <strong style="color:{verdict_color}">{p['combined']:+.0f}</strong>
-            {sector_txt}
-        </div>
-        <div style="font-size:0.72rem;color:rgba(255,255,255,0.45);margin-top:0.3rem;">
-            RSI {p['rsi']:.0f} · 1M {p['ret_1m']:+.1f}% · 3M {p['ret_3m']:+.1f}%
-            {'· MA200 ✅' if p.get('above_ma200') else '· MA200 ❌'}
-        </div>
-        <div style="font-size:0.68rem;color:rgba(255,61,87,0.6);margin-top:0.3rem;">
-            ⚠️ Avoid / Exit if holding
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    line1 = f'<div style="background:rgba(255,61,87,0.04);border:1px solid rgba(255,61,87,0.25);border-radius:12px;padding:0.85rem 1rem;margin-bottom:0.4rem;">'
+    line2 = f'<div style="display:flex;justify-content:space-between;align-items:center;"><span style="font-family:Syne,sans-serif;font-size:1.1rem;font-weight:800;color:#fff;">{ticker}</span><span style="font-size:0.7rem;font-weight:700;color:{verdict_color};">{verdict}</span></div>'
+    line3 = f'<div style="font-size:0.85rem;color:rgba(255,255,255,0.7);margin:0.2rem 0;">${price:.2f} · Score <strong style="color:{verdict_color}">{combined:+.0f}</strong><span style="color:rgba(255,255,255,0.4);font-size:0.68rem">{sector_part}</span></div>'
+    line4 = f'<div style="font-size:0.72rem;color:rgba(255,255,255,0.45);margin-top:0.3rem;">RSI {rsi_val:.0f} · 1M {ret_1m:+.1f}% · 3M {ret_3m:+.1f}% · {ma200_txt}</div>'
+    line5 = '<div style="font-size:0.68rem;color:rgba(255,61,87,0.6);margin-top:0.3rem;">⚠️ Avoid / Exit if holding</div></div>'
 
-    if st.button(f"🔍 Analyze {p['ticker']}", key=f"sell_analyze_{idx}", use_container_width=True):
-        st.session_state.pro_picked = p["ticker"]
-        st.session_state.pro_last_scanned = p["ticker"]
+    st.markdown(line1 + line2 + line3 + line4 + line5, unsafe_allow_html=True)
+
+    if st.button(f"🔍 Analyze {ticker}", key=f"sell_analyze_{idx}", use_container_width=True):
+        st.session_state.pro_picked = ticker
+        st.session_state.pro_last_scanned = ticker
         st.rerun()
+
 
 
 # ============================================================
@@ -298,23 +288,20 @@ def show_pro_dashboard(user):
             st.markdown('<div class="picks-sub">Auto-scanned · ranked by score · with fuel & target</div>',
                         unsafe_allow_html=True)
 
-            uni = st.selectbox("Universe", ["dow", "nasdaq100", "sp500", "sp400", "sp600", "russell2000"],
+            uni = st.selectbox("Universe",
+                               ["dow","nasdaq100","sp500","sp400","sp600","russell2000"],
                                format_func=lambda x: {
-                                   "dow": "Dow 30 (γρήγορο)",
-                                   "nasdaq100": "NASDAQ 100",
-                                   "sp500": "S&P 500",
-                                   "sp400": "S&P 400 Mid Cap",
-                                   "sp600": "S&P 600 Small Cap",
-                                   "russell2000": "Russell 2000",
+                                   "dow":"Dow 30 (γρήγορο)","nasdaq100":"NASDAQ 100",
+                                   "sp500":"S&P 500","sp400":"S&P 400 Mid Cap",
+                                   "sp600":"S&P 600 Small Cap","russell2000":"Russell 2000",
                                }[x],
                                key="picks_universe", label_visibility="collapsed")
-
-            # Sector filter
-            sector_filter = st.selectbox("Sector", ["All Sectors", "Technology", "Healthcare",
-                                "Financials", "Consumer Discretionary", "Consumer Staples",
-                                "Energy", "Industrials", "Materials", "Real Estate",
-                                "Utilities", "Communication Services"],
-                                key="sector_filter", label_visibility="collapsed")
+            sector_filter = st.selectbox("Sector",
+                               ["All Sectors","Technology","Healthcare","Financials",
+                                "Consumer Discretionary","Consumer Staples","Energy",
+                                "Industrials","Materials","Real Estate","Utilities",
+                                "Communication Services"],
+                               key="sector_filter", label_visibility="collapsed")
 
             if st.button("🔄 Refresh scan", key="refresh_picks", use_container_width=True):
                 scan_todays_picks.clear()
@@ -323,29 +310,29 @@ def show_pro_dashboard(user):
             with st.spinner("Scanning the market..."):
                 picks = scan_todays_picks(universe=uni)
 
-            if not picks or (not picks.get("buys") and not picks.get("sells")):
+            if not picks:
                 st.info("Scanning returned nothing — rate-limited. Press Refresh.")
             else:
-                buys = picks.get("buys", [])
+                buys  = picks.get("buys", [])
                 sells = picks.get("sells", [])
 
-                # Apply sector filter
+                # Sector filter
                 if sector_filter != "All Sectors":
-                    buys = [p for p in buys if p.get("sector") == sector_filter]
+                    buys  = [p for p in buys  if p.get("sector") == sector_filter]
                     sells = [p for p in sells if p.get("sector") == sector_filter]
 
-                # Market Regime Banner
+                # Market Regime
                 regime = get_market_regime()
-                regime_color = {"bull": "#00C853", "bear": "#FF3D57", "neutral": "#F59E0B"}[regime["regime"]]
-                regime_icon = {"bull": "🟢", "bear": "🔴", "neutral": "🟡"}[regime["regime"]]
-                st.markdown(f"""
-                <div style="background:rgba(255,255,255,0.03);border:1px solid {regime_color}33;
-                    border-radius:8px;padding:0.5rem 0.8rem;margin-bottom:0.8rem;font-size:0.78rem;">
-                    {regime_icon} Market: <strong style="color:{regime_color}">{regime["regime"].upper()}</strong>
-                    · SPY {'✅' if regime['spy_ok'] else '❌'}
-                    · VIX {regime['vix_level']:.0f} {'✅' if regime['vix_ok'] else '⚠️'}
-                </div>
-                """, unsafe_allow_html=True)
+                rc = {"bull":"#00C853","bear":"#FF3D57","neutral":"#F59E0B"}[regime["regime"]]
+                ri = {"bull":"🟢","bear":"🔴","neutral":"🟡"}[regime["regime"]]
+                st.markdown(
+                    f'<div style="background:rgba(255,255,255,0.03);border:1px solid {rc}44;' +
+                    f'border-radius:8px;padding:0.5rem 0.8rem;margin-bottom:0.8rem;font-size:0.78rem;">' +
+                    f'{ri} Market: <strong style="color:{rc}">{regime["regime"].upper()}</strong>' +
+                    f' · SPY {"✅" if regime["spy_ok"] else "❌"}' +
+                    f' · VIX {regime["vix_level"]:.0f} {"✅" if regime["vix_ok"] else "⚠️"}</div>',
+                    unsafe_allow_html=True
+                )
 
                 # BUY section
                 if buys:
