@@ -1236,3 +1236,148 @@ def screen_ticker_v2(ticker, include_sector=False):
     except Exception:
         return None
 
+
+# ============================================================
+# SHORT SETUP — Mirror logic για short selling
+# ============================================================
+
+def short_setup(df):
+    """
+    Υπολογίζει Entry / Stop Loss / Target για SHORT position.
+    Mirror του target_projection() αλλά για κατοδική κίνηση.
+
+    Entry:     τρέχουσα τιμή (ή -1% για confirmation)
+    Stop Loss: πάνω από recent swing HIGH + 1.5x ATR
+    Target:    Support level ή -2x/-3x το risk
+    """
+    if df is None or len(df) < 60:
+        return None
+
+    close = df['Close']
+    current = float(close.iloc[-1])
+    atr = float(atr_calc(df).iloc[-1])
+
+    # Stop Loss: πάνω από recent swing high
+    recent_high = float(df['High'].tail(10).max())
+    sl_atr = current + 1.5 * atr
+    stop_loss = min(recent_high * 1.01, sl_atr)
+
+    # Target: support level (recent low) ή 2:1 R:R
+    risk = stop_loss - current
+    target_1 = current - 2 * risk   # 2:1
+    target_2 = current - 3 * risk   # 3:1
+
+    # Support (recent low)
+    support = float(close.tail(52).min())
+    if support < current * 0.98:
+        target_2 = max(target_2, support)
+
+    pct_sl = (stop_loss - current) / current * 100
+    pct_t1 = (target_1 - current) / current * 100
+    pct_t2 = (target_2 - current) / current * 100
+
+    return {
+        "entry":     current,
+        "stop_loss": stop_loss,
+        "target_1":  target_1,
+        "target_2":  target_2,
+        "atr":       atr,
+        "pct_sl":    pct_sl,    # θετικό (risk πάνω)
+        "pct_t1":    pct_t1,    # αρνητικό (profit κάτω)
+        "pct_t2":    pct_t2,    # αρνητικό (profit κάτω)
+        "rr_ratio":  abs(pct_t1 / pct_sl) if pct_sl != 0 else 0,
+    }
+
+
+def bearish_fuel_gauge(df, lookback=20):
+    """
+    Mirror του fuel_gauge() για κατοδικές κινήσεις.
+    Μετράει πόσο 'καύσιμο' έχει μείνει στην πτώση.
+
+    100% = η πτώση έχει δύναμη, room to fall
+    0%   = η πτώση εξαντλείται, πιθανό bounce
+
+    5 σήματα εξάντλησης πτώσης:
+    1. RSI Divergence     — τιμή ↓ αλλά RSI ↑ (bullish divergence)
+    2. MACD Divergence    — τιμή ↓ αλλά MACD histogram ↑
+    3. Volume Exhaustion  — πτώση με λιγότερο volume
+    4. Oversold           — RSI < 30, Stochastic < 20
+    5. Overextension down — πολύ κάτω από MA20
+    """
+    if df is None or len(df) < 60:
+        return None
+
+    close  = df['Close']
+    volume = df['Volume']
+    current = float(close.iloc[-1])
+
+    rsi_s = rsi(close)
+    ml, sl_line, hist = macd(close)
+    ma20 = close.rolling(20).mean()
+    k, d = stochastic(df)
+
+    rsi_now   = float(rsi_s.iloc[-1])
+    stoch_now = float(k.iloc[-1]) if not pd.isna(k.iloc[-1]) else 50.0
+
+    fuel = 100.0
+    signals = []
+
+    def sig(text, triggered, penalty):
+        nonlocal fuel
+        signals.append((text, triggered))
+        if triggered:
+            fuel -= penalty
+
+    half = lookback // 2
+    close_sm = close.rolling(3).mean()
+    rsi_sm   = rsi_s.rolling(3).mean()
+    hist_sm  = hist.rolling(3).mean()
+
+    recent_price = float(close_sm.tail(half).min())
+    prev_price   = float(close_sm.iloc[-lookback:-half].min())
+    near_lows    = recent_price <= prev_price * 1.015  # τιμή κρατάει χαμηλά
+
+    # 1. RSI Bullish Divergence — τιμή κάτω αλλά RSI ανεβαίνει
+    recent_rsi = float(rsi_sm.tail(half).min())
+    prev_rsi   = float(rsi_sm.iloc[-lookback:-half].min())
+    rsi_div = near_lows and (recent_rsi > prev_rsi + 4)
+    sig("RSI bullish divergence — sellers losing power", rsi_div, 25)
+
+    # 2. MACD Bullish Divergence
+    recent_hist = float(hist_sm.tail(half).min())
+    prev_hist   = float(hist_sm.iloc[-lookback:-half].min())
+    macd_div = near_lows and (recent_hist > prev_hist * 0.7)
+    sig("MACD bullish divergence — weakening sell thrust", macd_div, 20)
+
+    # 3. Volume Exhaustion — πτώση με λιγότερο volume
+    vol_recent = float(volume.tail(half).mean())
+    vol_prev   = float(volume.iloc[-lookback:-half].mean())
+    vol_exhaust = near_lows and (vol_recent < vol_prev * 0.7)
+    sig("Volume exhaustion — fewer sellers", vol_exhaust, 20)
+
+    # 4. Oversold — RSI < 32, Stochastic < 20
+    rsi_pen   = max(0.0, min(25.0, (32 - rsi_now) * 1.4))
+    stoch_pen = max(0.0, min(10.0, (20 - stoch_now) * 0.7))
+    ob_penalty = rsi_pen + stoch_pen
+    sig(f"Oversold — RSI {rsi_now:.0f}, Stoch {stoch_now:.0f}", ob_penalty > 4, 0)
+    fuel -= ob_penalty
+
+    # 5. Overextension down — πολύ κάτω από MA20
+    ma20_now = float(ma20.iloc[-1])
+    ext_pct = (ma20_now - current) / ma20_now * 100  # πόσο % κάτω από MA20
+    ext_penalty = max(0.0, min(25.0, (ext_pct - 8) * 2.0))
+    sig(f"Overextended {ext_pct:.1f}% below MA20", ext_penalty > 0, 0)
+    fuel -= ext_penalty
+
+    fuel = max(0.0, min(100.0, fuel))
+    status = "strong" if fuel >= 65 else "weakening" if fuel >= 35 else "exhausted"
+
+    return {
+        "fuel":    round(fuel),
+        "status":  status,
+        "signals": signals,
+        "rsi":     rsi_now,
+        "stoch":   stoch_now,
+        "ext_pct": ext_pct,
+    }
+
