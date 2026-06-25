@@ -255,4 +255,3 @@ def show_pro_dashboard(user):
 
         # ── RIGHT: auto picks ──
         with right:
-
