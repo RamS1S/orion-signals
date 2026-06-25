@@ -606,32 +606,50 @@ def full_analysis(df, ticker=None, include_extras=False):
     pct_from_high = (current - h52) / h52 * 100
     pct_from_low = (current - l52) / l52 * 100
 
-    # ════════════════════════════════════════════════════════
-    # CORE CONDITIONS (AND-logic)
-    # Για BUY signal πρέπει να ισχύουν ΟΛΑ τα core:
-    # ════════════════════════════════════════════════════════
-    conditions = {
-        # TREND — uptrend confirmed
-        'above_ma50':    current > ma50,
+    # MANDATORY — 4 conditions, πρέπει ΟΛΑ για BUY
+    mandatory = {
+        'above_ma50':   current > ma50,
+        'mom_positive': mom_score > 0,
+        'rsi_ok':       30 < rsi_v < 75,
+        'macd_bullish': macd_bull,
+    }
+    mandatory_ok = all(mandatory.values())
+
+    # BEARISH MANDATORY — για SELL signals
+    mandatory_bear = {
+        'below_ma50':   current < ma50,
+        'mom_negative': mom_score < 0,
+        'rsi_bear':     rsi_v < 50 or rsi_v > 80,
+        'macd_bearish': not macd_bull,
+    }
+    mandatory_bear_ok = all(mandatory_bear.values())
+
+    # OPTIONAL — πρέπει 3/5 για BUY, 4/5 για STRONG BUY
+    optional = {
         'above_ma200':   current > ma200 if ma200 else True,
         'ma50_gt_ma200': ma50 > ma200 if ma200 else True,
-        # MOMENTUM — κινείται προς τα πάνω
-        'mom_positive':  mom_score > 0,
-        'ret_3m_pos':    returns.get('3m', 0) > 0,
-        # RSI — όχι overbought
-        'rsi_ok':        30 < rsi_v < 75,
-        # MACD — bullish
-        'macd_bullish':  macd_bull,
-        # OBV — volume επιβεβαιώνει
         'obv_rising':    obv_direction == 'rising',
-        # VWAP — πάνω από institutional average
         'above_vwap':    above_vwap,
+        'ret_3m_pos':    returns.get('3m', 0) > 0,
     }
+    optional_count = sum(optional.values())
 
+    # BEARISH OPTIONAL
+    optional_bear = {
+        'below_ma200':  current < ma200 if ma200 else False,
+        'death_cross':  ma50 < ma200 if ma200 else False,
+        'obv_falling':  obv_direction == 'falling',
+        'below_vwap':   not above_vwap,
+        'ret_3m_neg':   returns.get('3m', 0) < 0,
+    }
+    optional_bear_count = sum(optional_bear.values())
+
+    # Συνολικό για UI
+    conditions = {**mandatory, **optional}
     core_bull = sum(conditions.values())
     core_total = len(conditions)
 
-    # BONUS signals (προσθέτουν βαρύτητα αλλά δεν είναι απαραίτητα)
+    # BONUS signals
     bonus = {
         'macd_fresh_cross': macd_cross,
         'stochrsi_bullish': stochrsi_k > stochrsi_d and stochrsi_k < 80,
@@ -643,34 +661,31 @@ def full_analysis(df, ticker=None, include_extras=False):
     }
     bonus_count = sum(bonus.values())
 
-    # WARNING signals (μειώνουν confidence)
+    # WARNING signals
     warnings_list = {
-        'overbought_rsi':    rsi_v > 75,
-        'above_bb_upper':    bb_pos > 100,
-        'wr_overbought':     wr_overbought,
-        'climax_volume':     climax['detected'] and climax['type'] == 'buying_climax',
-        'weak_trend':        adx_v < 20,
-        'below_vwap':        not above_vwap,
+        'overbought_rsi': rsi_v > 75,
+        'above_bb_upper': bb_pos > 100,
+        'wr_overbought':  wr_overbought,
+        'climax_volume':  climax['detected'] and climax['type'] == 'buying_climax',
+        'weak_trend':     adx_v < 20,
+        'below_vwap':     not above_vwap,
     }
     warning_count = sum(warnings_list.values())
 
     # ── SCORING ──
-    # Technical score βάσει conditions + bonus - warnings
     tech_raw = (core_bull / core_total) * 60 + bonus_count * 5 - warning_count * 8
     tech_score = np.clip(tech_raw, -100, 100)
     combined = (mom_score + tech_score) / 2
     agree = (mom_score > 0 and tech_score > 0) or (mom_score < 0 and tech_score < 0)
 
-    # ── VERDICT (AND-logic) ──
-    # STRONG BUY: τουλάχιστον 8/9 core conditions + combined > 40
-    # BUY: τουλάχιστον 6/9 core conditions + combined > 20
-    if core_bull >= 8 and combined > 40 and agree:
+    # ── VERDICT ──
+    if mandatory_ok and optional_count >= 4 and combined > 35:
         verdict = "STRONG BUY"
-    elif core_bull >= 6 and combined > 20 and agree:
+    elif mandatory_ok and optional_count >= 3 and combined > 15:
         verdict = "BUY"
-    elif core_bull <= 3 and combined < -40 and agree:
+    elif mandatory_bear_ok and optional_bear_count >= 4 and combined < -35:
         verdict = "STRONG SELL"
-    elif core_bull <= 4 and combined < -20 and agree:
+    elif mandatory_bear_ok and optional_bear_count >= 3 and combined < -15:
         verdict = "SELL"
     elif not agree and abs(combined) > 10:
         verdict = "MIXED SIGNALS"
@@ -1075,3 +1090,148 @@ def inject_css():
     </style>
     """, unsafe_allow_html=True)
 
+
+# ============================================================
+# UNIVERSES v2 — Νέοι δείκτες
+# ============================================================
+
+@st.cache_data(ttl=3600)
+def get_sp400():
+    """S&P 400 Mid Cap."""
+    try:
+        url = "https://en.wikipedia.org/wiki/List_of_S%26P_400_companies"
+        tables = pd.read_html(url)
+        for tbl in tables:
+            for col in ['Ticker', 'Symbol', 'Ticker symbol']:
+                if col in tbl.columns:
+                    return [x.replace('.', '-') for x in tbl[col].tolist()]
+    except Exception:
+        pass
+    return ['AXON','BILL','CASY','CHDN','DKS','EHC','EXEL','FBIN','FHN','GMED',
+            'GTLB','HQY','ITT','JAZZ','LFUS','LNW','MMS','MTZ','NOVT','NVT',
+            'ONTO','OZK','PFGC','PRI','PSTG','RGEN','RLI','RRX','SFM','SLGN',
+            'SM','SMAR','SNX','SSD','THC','TMHC','TTC','TXRH','UNF','WMS']
+
+
+@st.cache_data(ttl=3600)
+def get_sp600():
+    """S&P 600 Small Cap."""
+    try:
+        url = "https://en.wikipedia.org/wiki/List_of_S%26P_600_companies"
+        tables = pd.read_html(url)
+        for tbl in tables:
+            for col in ['Ticker', 'Symbol', 'Ticker symbol']:
+                if col in tbl.columns:
+                    return [x.replace('.', '-') for x in tbl[col].tolist()]
+    except Exception:
+        pass
+    return ['ACLS','ADUS','AGYS','ALRM','AMPH','AMSF','ANIK','AOSL','APEI','ARCH',
+            'ARKO','ARLO','ASTH','ATEN','ATNI','AVAV','AVNS','AXGN','BCAL','BCPC',
+            'BFST','BGS','BHE','BKU','BLKB','BRC','BRKL','CABO','CAKE','CALX',
+            'CARG','CASH','CATO','CCRN','CDRE','CEVA','CHCO','CHUY','CLFD','COHU']
+
+
+@st.cache_data(ttl=3600)
+def get_russell2000():
+    """Russell 2000 — Top 150 liquid small caps."""
+    return [
+        'ACLX','ACMR','ADMA','ADUS','AGEN','AGYS','AHCO','ALRM','AMPH','AMSF',
+        'AMTB','ANIK','AOSL','APEI','ARCH','ARKO','ARLO','ASTH','ATEN','AVAV',
+        'AVNS','AXGN','BCAL','BCPC','BFST','BGS','BKU','BLKB','BRC','BRKL',
+        'CABO','CAKE','CALX','CARG','CASH','CATO','CCRN','CDRE','CEVA','CHCO',
+        'CHUY','CLFD','CLNE','COHU','COMM','CPSI','CRAI','CSWI','CTBI','CTRE',
+        'CVBF','CVCO','CVLG','DAKT','DCGO','DCOM','DFIN','DGII','DLTH','DORM',
+        'DWSN','DXPE','EAST','EFSC','ELME','ENSG','EPRT','ERII','ESRT','EVTC',
+        'EXTR','EZPW','FBNC','FCBC','FCEL','FISI','FLGT','FLNC','FLXS','FMBH',
+        'FMNB','FOLD','FORM','FORR','FOSL','FRPH','FSBW','FULT','GDOT','GEF',
+        'GEOS','GERN','GLAD','GLDD','GOOD','GRTS','HAFC','HCAT','HCSG','HEAR',
+        'HEES','HFWA','HIBB','HIMS','HTBK','HUBG','HURN','HWKN','HYXF','IIIV',
+        'IIIN','IMMR','IMRX','INBK','INDB','INFU','INSG','INVA','IONS','IOSP',
+        'IPAR','IPGP','IRMD','ITIC','JACK','JBSS','JELD','JOBY','KELYA','KEQU',
+        'KFRC','KIDS','KNSL','KTOS','KURA','LGND','LKFN','LMAT','LNDC','LOCO',
+        'LPSN','LQDT','LSAQ','LSTR','LVWR','LYTS','MBIN','MBUU','MCBS','MCFT',
+    ]
+
+
+@st.cache_data(ttl=86400)
+def get_sector(ticker):
+    """Sector μιας μετοχής από yfinance. Cache 24h."""
+    try:
+        info = yf.Ticker(ticker).info
+        return info.get('sector', 'Unknown')
+    except Exception:
+        return 'Unknown'
+
+
+SECTOR_ETFS = {
+    'Technology': 'XLK', 'Healthcare': 'XLV', 'Financials': 'XLF',
+    'Consumer Discretionary': 'XLY', 'Consumer Staples': 'XLP',
+    'Energy': 'XLE', 'Industrials': 'XLI', 'Materials': 'XLB',
+    'Real Estate': 'XLRE', 'Utilities': 'XLU', 'Communication Services': 'XLC',
+}
+
+
+def get_universe(name):
+    """Κεντρική function επιλογής universe."""
+    return {
+        'dow': get_dow, 'nasdaq100': get_nasdaq100, 'sp500': get_sp500,
+        'sp400': get_sp400, 'sp600': get_sp600, 'russell2000': get_russell2000,
+    }.get(name, get_dow)()
+
+
+# ============================================================
+# SCREEN TICKER v2 — Επιστρέφει ΟΛΕΣ τις κατηγορίες
+# ============================================================
+
+def screen_ticker_v2(ticker, include_sector=False):
+    """
+    Screener που επιστρέφει ΟΛΑ τα verdicts:
+    STRONG BUY, BUY, NEUTRAL, MIXED, SELL, STRONG SELL.
+    Έτσι βλέπεις και τι να αποφύγεις/πουλήσεις.
+    """
+    try:
+        df = yf.download(ticker, period="1y", progress=False,
+                         auto_adjust=True, threads=False)
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        if df.empty or len(df) < 100:
+            return None
+
+        close = df['Close']
+        volume = df['Volume']
+        current = float(close.iloc[-1])
+        avg_vol = float(volume.tail(20).mean())
+
+        # Φίλτρο: μόνο για screener (όχι για single stock analysis)
+        if current < 2 or avg_vol < 50_000:
+            return None
+
+        a = full_analysis(df, ticker=ticker)
+
+        sector = 'Unknown'
+        if include_sector and a['verdict'] in ('BUY', 'STRONG BUY', 'SELL', 'STRONG SELL'):
+            sector = get_sector(ticker)
+
+        return {
+            'ticker':      ticker,
+            'price':       current,
+            'verdict':     a['verdict'],
+            'combined':    a['combined'],
+            'mom_score':   a['mom_score'],
+            'tech_score':  a['tech_score'],
+            'core_bull':   a['core_bull'],
+            'rsi':         a['rsi'],
+            'adx':         a['adx'],
+            'ret_1m':      a['returns'].get('1m', 0),
+            'ret_3m':      a['returns'].get('3m', 0),
+            'ret_12m':     a['returns'].get('12m', 0),
+            'macd_cross':  a['macd_cross'],
+            'above_ma200': current > a['ma200'] if a['ma200'] else False,
+            'above_vwap':  a['above_vwap'],
+            'obv_ok':      a['obv_direction'] == 'rising',
+            'squeeze':     a['squeeze']['momentum_rising'] and not a['squeeze']['squeeze_on'],
+            'sector':      sector,
+            'avg_vol':     avg_vol,
+        }
+    except Exception:
+        return None
