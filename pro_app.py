@@ -21,7 +21,9 @@ import yfinance as yf
 
 from indicators import (
     inject_css, load_data, full_analysis, create_chart,
-    screen_ticker, run_backtest, get_dow, get_nasdaq100, get_sp500,
+    screen_ticker, screen_ticker_v2, run_backtest,
+    get_dow, get_nasdaq100, get_sp500, get_sp400, get_sp600, get_russell2000,
+    get_universe, get_market_regime,
     atr_calc, fuel_gauge, fuel_bar, confirmation_entry,
     check_earnings, target_projection,
     ema, obv, climax_volume, relative_strength,
@@ -37,26 +39,29 @@ def scan_todays_picks(universe="dow", top_n=8, min_score=10):
     Σκανάρει το universe, βαθμολογεί, και επιστρέφει τα top picks
     με fuel gauge + target. Cached 30 λεπτά (1 scan για όλους).
     """
-    tickers = {"dow": get_dow, "nasdaq100": get_nasdaq100, "sp500": get_sp500}[universe]()
+    tickers = get_universe(universe)
     results = []
     with ThreadPoolExecutor(max_workers=10) as ex:
-        futures = {ex.submit(screen_ticker, t): t for t in tickers}
+        futures = {ex.submit(screen_ticker_v2, t): t for t in tickers}
         for f in as_completed(futures):
             r = f.result()
             if r:
                 results.append(r)
 
-    # Ταξινόμηση όλων με score, κρατάμε τα top με θετικό verdict ΑΝ υπάρχουν
     results.sort(key=lambda x: x["combined"], reverse=True)
+
+    # BUY signals
     buys = [r for r in results if r["verdict"] in ("BUY", "STRONG BUY") and r["combined"] >= min_score]
+    pool = buys if buys else [r for r in results if r["verdict"] not in ("SELL", "STRONG SELL")][:top_n]
+    top_buys = pool[:top_n]
 
-    # Αν δεν υπάρχουν καθαρά buys, δείξε τα top scored ούτως ή άλλως (best available)
-    pool = buys if buys else results[:top_n]
-    top = pool[:top_n]
+    # SELL signals (ξεχωριστά)
+    sells = [r for r in results if r["verdict"] in ("SELL", "STRONG SELL")]
+    sells = sorted(sells, key=lambda x: x["combined"])[:top_n]
 
-    # Εμπλούτισε με fuel + target
-    enriched = []
-    for r in top:
+    # Εμπλούτισε BUY με fuel + target
+    enriched_buys = []
+    for r in top_buys:
         df = load_data(r["ticker"], "6mo")
         if df is None or len(df) < 60:
             continue
@@ -67,17 +72,18 @@ def scan_todays_picks(universe="dow", top_n=8, min_score=10):
         sl = entry - 1.5 * atr
         tgt = entry + 3 * atr
         rr = (tgt - entry) / (entry - sl) if (entry - sl) > 0 else 0
-        enriched.append({
+        enriched_buys.append({
             **r,
-            "fuel":     fg["fuel"] if fg else None,
+            "fuel": fg["fuel"] if fg else None,
             "fuel_status": fg["status"] if fg else None,
-            "entry":    entry, "sl": sl, "target": tgt, "rr": rr,
-            "tgt_low":  tp["target_1"] if tp else None,
+            "entry": entry, "sl": sl, "target": tgt, "rr": rr,
+            "tgt_low": tp["target_1"] if tp else None,
             "tgt_high": tp["target_2"] if tp else None,
-            "tgt_pct_low":  tp["pct_t1"] if tp else None,
+            "tgt_pct_low": tp["pct_t1"] if tp else None,
             "tgt_pct_high": tp["pct_t2"] if tp else None,
         })
-    return enriched
+
+    return {"buys": enriched_buys, "sells": sells}
 
 
 def render_pick_card(p, idx):
@@ -118,6 +124,39 @@ def render_pick_card(p, idx):
     """, unsafe_allow_html=True)
 
     if st.button(f"🔍 Analyze {p['ticker']}", key=f"pick_analyze_{idx}", use_container_width=True):
+        st.session_state.pro_picked = p["ticker"]
+        st.session_state.pro_last_scanned = p["ticker"]
+        st.rerun()
+
+
+
+def render_sell_card(p, idx):
+    """Card για SELL/STRONG SELL signals."""
+    verdict_color = "#FF3D57" if "STRONG" in p["verdict"] else "#FF8A95"
+    sector_txt = f"<span style='color:rgba(255,255,255,0.4);font-size:0.68rem'>{p.get('sector','')}</span>" if p.get('sector') and p.get('sector') != 'Unknown' else ""
+
+    st.markdown(f"""
+    <div style="background:rgba(255,61,87,0.04);border:1px solid rgba(255,61,87,0.25);
+        border-radius:12px;padding:0.85rem 1rem;margin-bottom:0.4rem;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-family:'Syne',sans-serif;font-size:1.1rem;font-weight:800;color:#fff;">{p['ticker']}</span>
+            <span style="font-size:0.7rem;font-weight:700;color:{verdict_color};">{p['verdict']}</span>
+        </div>
+        <div style="font-size:0.85rem;color:rgba(255,255,255,0.7);margin:0.2rem 0;">
+            ${p['price']:.2f} · Score <strong style="color:{verdict_color}">{p['combined']:+.0f}</strong>
+            {sector_txt}
+        </div>
+        <div style="font-size:0.72rem;color:rgba(255,255,255,0.45);margin-top:0.3rem;">
+            RSI {p['rsi']:.0f} · 1M {p['ret_1m']:+.1f}% · 3M {p['ret_3m']:+.1f}%
+            {'· MA200 ✅' if p.get('above_ma200') else '· MA200 ❌'}
+        </div>
+        <div style="font-size:0.68rem;color:rgba(255,61,87,0.6);margin-top:0.3rem;">
+            ⚠️ Avoid / Exit if holding
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if st.button(f"🔍 Analyze {p['ticker']}", key=f"sell_analyze_{idx}", use_container_width=True):
         st.session_state.pro_picked = p["ticker"]
         st.session_state.pro_last_scanned = p["ticker"]
         st.rerun()
@@ -259,10 +298,23 @@ def show_pro_dashboard(user):
             st.markdown('<div class="picks-sub">Auto-scanned · ranked by score · with fuel & target</div>',
                         unsafe_allow_html=True)
 
-            uni = st.selectbox("Universe", ["dow", "nasdaq100", "sp500"],
-                               format_func=lambda x: {"dow": "Dow 30 (fast)", "nasdaq100": "NASDAQ 100",
-                                                      "sp500": "S&P 500 (slow)"}[x],
+            uni = st.selectbox("Universe", ["dow", "nasdaq100", "sp500", "sp400", "sp600", "russell2000"],
+                               format_func=lambda x: {
+                                   "dow": "Dow 30 (γρήγορο)",
+                                   "nasdaq100": "NASDAQ 100",
+                                   "sp500": "S&P 500",
+                                   "sp400": "S&P 400 Mid Cap",
+                                   "sp600": "S&P 600 Small Cap",
+                                   "russell2000": "Russell 2000",
+                               }[x],
                                key="picks_universe", label_visibility="collapsed")
+
+            # Sector filter
+            sector_filter = st.selectbox("Sector", ["All Sectors", "Technology", "Healthcare",
+                                "Financials", "Consumer Discretionary", "Consumer Staples",
+                                "Energy", "Industrials", "Materials", "Real Estate",
+                                "Utilities", "Communication Services"],
+                                key="sector_filter", label_visibility="collapsed")
 
             if st.button("🔄 Refresh scan", key="refresh_picks", use_container_width=True):
                 scan_todays_picks.clear()
@@ -271,16 +323,43 @@ def show_pro_dashboard(user):
             with st.spinner("Scanning the market..."):
                 picks = scan_todays_picks(universe=uni)
 
-            if not picks:
-                st.info("Scanning returned nothing — the market data source may be rate-limited. Press Refresh in a moment.")
+            if not picks or (not picks.get("buys") and not picks.get("sells")):
+                st.info("Scanning returned nothing — rate-limited. Press Refresh.")
             else:
-                buys = [p for p in picks if p["verdict"] in ("BUY", "STRONG BUY")]
+                buys = picks.get("buys", [])
+                sells = picks.get("sells", [])
+
+                # Apply sector filter
+                if sector_filter != "All Sectors":
+                    buys = [p for p in buys if p.get("sector") == sector_filter]
+                    sells = [p for p in sells if p.get("sector") == sector_filter]
+
+                # Market Regime Banner
+                regime = get_market_regime()
+                regime_color = {"bull": "#00C853", "bear": "#FF3D57", "neutral": "#F59E0B"}[regime["regime"]]
+                regime_icon = {"bull": "🟢", "bear": "🔴", "neutral": "🟡"}[regime["regime"]]
+                st.markdown(f"""
+                <div style="background:rgba(255,255,255,0.03);border:1px solid {regime_color}33;
+                    border-radius:8px;padding:0.5rem 0.8rem;margin-bottom:0.8rem;font-size:0.78rem;">
+                    {regime_icon} Market: <strong style="color:{regime_color}">{regime["regime"].upper()}</strong>
+                    · SPY {'✅' if regime['spy_ok'] else '❌'}
+                    · VIX {regime['vix_level']:.0f} {'✅' if regime['vix_ok'] else '⚠️'}
+                </div>
+                """, unsafe_allow_html=True)
+
+                # BUY section
                 if buys:
-                    st.caption(f"Found {len(buys)} strong setups")
+                    st.markdown(f"**🟢 BUY signals ({len(buys)})**")
+                    for i, p in enumerate(buys):
+                        render_pick_card(p, i)
                 else:
-                    st.caption("No strong buys today — showing best-scored stocks")
-                for i, p in enumerate(picks):
-                    render_pick_card(p, i)
+                    st.info("Δεν βρέθηκαν BUY signals.")
+
+                # SELL section
+                if sells:
+                    st.markdown(f"**🔴 SELL / AVOID ({len(sells)})**")
+                    for i, p in enumerate(sells):
+                        render_sell_card(p, i)
 
         # ── LEFT: manual analysis ──
         with left:
