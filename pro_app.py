@@ -604,8 +604,8 @@ def show_pro_dashboard(user):
         st.markdown("#### 🔍 Single Stock Analysis")
         c1, c2 = st.columns([1, 3])
         with c1:
-            pro_ticker = st.text_input("Ticker", value="AAPL", key="pro_single").upper()
-            pro_period = st.selectbox("Period", ["6mo", "1y", "2y", "5y", "10y"], index=1, key="pro_period")
+            pro_ticker = st.text_input("Ticker", value="AAPL", key="pro_single_ticker").upper()
+            pro_period = st.selectbox("Period", ["6mo", "1y", "2y", "5y", "10y"], index=1, key="pro_single_period")
             analyze_btn = st.button("Analyze →", use_container_width=True, key="pro_analyze")
 
         if analyze_btn or pro_ticker:
