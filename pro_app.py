@@ -28,6 +28,8 @@ from indicators import (
     check_earnings, target_projection,
     ema, obv, climax_volume, relative_strength,
     short_setup, bearish_fuel_gauge,
+    get_fundamentals, vfm_score, pre_breakout_detection,
+    scan_pre_breakouts,
 )
 
 
@@ -275,7 +277,7 @@ def show_pro_dashboard(user):
                 del st.session_state[k]
             st.rerun()
 
-    tab1, tab2, tab3 = st.tabs(["⚡ Today's Picks", "📊 Backtest", "💼 Portfolio"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["⚡ Today's Picks", "🔍 Single Stock", "👀 Watchlist", "🎯 Screener", "📊 Backtest", "💼 Portfolio"])
 
     # ════════════════════════════════════════════════════
     # TAB 1 — TODAY'S PICKS (two-column)
@@ -596,9 +598,210 @@ def show_pro_dashboard(user):
             st.success(f"✅ {chart_data['ticker']} added to portfolio (10 shares @ ${chart_data['entry']:.2f})")
 
     # ════════════════════════════════════════════════════
-    # TAB 2 — BACKTEST
+    # TAB 2 — SINGLE STOCK ANALYSIS
     # ════════════════════════════════════════════════════
     with tab2:
+        st.markdown("#### 🔍 Single Stock Analysis")
+        c1, c2 = st.columns([1, 3])
+        with c1:
+            pro_ticker = st.text_input("Ticker", value="AAPL", key="pro_single").upper()
+            pro_period = st.selectbox("Period", ["6mo", "1y", "2y", "5y", "10y"], index=1, key="pro_period")
+            analyze_btn = st.button("Analyze →", use_container_width=True, key="pro_analyze")
+
+        if analyze_btn or pro_ticker:
+            with st.spinner(f"Analyzing {pro_ticker}..."):
+                df = load_data(pro_ticker, pro_period)
+            if df is None:
+                st.error(f"No data for {pro_ticker}")
+            else:
+                a = full_analysis(df, include_extras=True)
+                vfm = vfm_score(df, a)
+                fund = get_fundamentals(pro_ticker)
+                earnings = check_earnings(pro_ticker)
+                tp = target_projection(df)
+                fg = fuel_gauge(df)
+
+                # Verdict banner
+                vc = {"STRONG BUY":"verdict-strong-buy","BUY":"verdict-buy",
+                      "STRONG SELL":"verdict-sell","SELL":"verdict-sell"}.get(a['verdict'],"verdict-neutral")
+                ico = {"STRONG BUY":"🟢","BUY":"🟢","STRONG SELL":"🔴","SELL":"🔴","MIXED SIGNALS":"🟡"}.get(a['verdict'],"⚪")
+                st.markdown(f'<div class="verdict-banner {vc}">{ico} {a["verdict"]} — {pro_ticker}</div>', unsafe_allow_html=True)
+
+                # Metrics row
+                m1,m2,m3,m4,m5 = st.columns(5)
+                m1.metric("Price", f"${a['current']:.2f}")
+                m2.metric("Score", f"{a['combined']:+.1f}")
+                m3.metric("Momentum", f"{a['mom_score']:+.1f}")
+                m4.metric("Technical", f"{a['tech_score']:+.1f}")
+                m5.metric("Fuel", f"{fg['fuel']}%" if fg else "N/A")
+
+                # VFM Score
+                if vfm:
+                    vfm_colors = {'excellent':'#00C853','good':'#69F0AE','fair':'#F59E0B','late':'#FF8A65','avoid':'#FF3D57'}
+                    vfm_color = vfm_colors.get(vfm['vfm_rating'], '#fff')
+                    st.markdown(
+                        f'<div style="background:rgba(255,255,255,0.03);border:1px solid {vfm_color}44;' +
+                        f'border-radius:10px;padding:0.85rem 1rem;margin:0.5rem 0;">' +
+                        f'<div style="display:flex;justify-content:space-between;align-items:center;">' +
+                        f'<span style="font-family:Syne;font-weight:700;color:#fff;">💰 VFM Entry Score</span>' +
+                        f'<span style="color:{vfm_color};font-weight:800;font-size:1.1rem;">{vfm["vfm_rating"].upper()} — {vfm["vfm_pct"]:.0f}% into tunnel</span></div>' +
+                        f'<div style="font-size:0.78rem;color:rgba(255,255,255,0.5);margin-top:0.3rem;">' +
+                        f'Support: ${vfm["support"]:.2f} → Resistance: ${vfm["resistance"]:.2f} · ' +
+                        f'Pullback: {vfm["pullback_pct"]:.1f}% {"✅" if vfm["has_pullback"] else "❌"} · ' +
+                        f'Near MA50: {"✅" if vfm["near_ma50"] else "❌"}</div></div>',
+                        unsafe_allow_html=True
+                    )
+
+                # Earnings warning
+                if earnings and earnings['has_earnings']:
+                    st.warning(f"⚠️ {earnings['message']}")
+
+                # Entry/SL/Target
+                if tp and a['verdict'] in ('BUY', 'STRONG BUY'):
+                    p1,p2,p3,p4 = st.columns(4)
+                    p1.metric("Entry", f"${tp['entry']:.2f}")
+                    p2.metric("Stop Loss 🛑", f"${tp['stop_loss']:.2f}", f"{tp['pct_sl']:+.1f}%", delta_color="inverse")
+                    p3.metric("Target 1 🎯", f"${tp['target_1']:.2f}", f"{tp['pct_t1']:+.1f}%")
+                    p4.metric("R/R", f"1:{tp['rr_ratio']:.1f}")
+                    st.caption(f"Target 2 (3:1): ${tp['target_2']:.2f} ({tp['pct_t2']:+.1f}%)")
+
+                # Fundamentals
+                if fund:
+                    st.markdown("#### 📊 Fundamentals")
+                    f1,f2,f3,f4 = st.columns(4)
+                    f1.metric("P/E", f"{fund['pe']}" if fund['pe'] else "N/A")
+                    f2.metric("EPS Growth", f"{fund['eps_growth']}%" if fund['eps_growth'] else "N/A")
+                    f3.metric("Rev Growth", f"{fund['rev_growth']}%" if fund['rev_growth'] else "N/A")
+                    f4.metric("Short Float", f"{fund['short_float']}%" if fund['short_float'] else "N/A")
+                    f5,f6,f7,f8 = st.columns(4)
+                    f5.metric("Debt/Equity", f"{fund['debt_equity']}" if fund['debt_equity'] else "N/A")
+                    f6.metric("Profit Margin", f"{fund['profit_margin']}%" if fund['profit_margin'] else "N/A")
+                    f7.metric("Market Cap", f"${fund['market_cap']}B" if fund['market_cap'] else "N/A")
+                    f8.metric("Beta", f"{fund['beta']}" if fund['beta'] else "N/A")
+                    if fund['flags']:
+                        for flag in fund['flags']:
+                            st.caption(flag)
+
+                # Chart
+                st.plotly_chart(create_chart(df, a, show_vwap=True, show_ema21=True), use_container_width=True)
+
+                # Signals
+                st.markdown("#### Signals")
+                s1,s2 = st.columns(2)
+                for i,(text,d) in enumerate(a['signals']):
+                    ic = {"bullish":"🟢","bearish":"🔴","neutral":"⚪"}[d]
+                    (s1 if i%2==0 else s2).write(f"{ic} {text}")
+
+    # ════════════════════════════════════════════════════
+    # TAB 3 — WATCHLIST (Pre-breakout)
+    # ════════════════════════════════════════════════════
+    with tab3:
+        st.markdown("#### 👀 Watchlist — Pre-Breakout Setups")
+        st.caption("Μετοχές που 'φορτίζουν' πριν από μεγάλη κίνηση. Δεν κινούνται ακόμα — αλλά ετοιμάζονται.")
+
+        wc1,wc2 = st.columns(2)
+        wb_universe = wc1.selectbox("Universe",
+            ["dow","nasdaq100","sp500","sp400","sp600","russell2000"],
+            format_func=lambda x: {"dow":"Dow 30","nasdaq100":"NASDAQ 100","sp500":"S&P 500",
+                                   "sp400":"S&P 400 Mid Cap","sp600":"S&P 600 Small Cap","russell2000":"Russell 2000"}[x],
+            key="wb_universe")
+        wb_top = wc2.number_input("Top N", min_value=5, max_value=50, value=15, key="wb_top")
+
+        if st.button("🔍 Scan for Breakouts", use_container_width=True, key="wb_scan"):
+            with st.spinner(f"Scanning {wb_universe} for pre-breakout setups..."):
+                wb_results = scan_pre_breakouts(universe=wb_universe, top_n=wb_top)
+
+            if not wb_results:
+                st.info("No pre-breakout setups found. Try a different universe.")
+            else:
+                ready = [r for r in wb_results if r['status'] == 'ready']
+                building = [r for r in wb_results if r['status'] == 'building']
+                early = [r for r in wb_results if r['status'] == 'early']
+
+                for section, items, color, icon in [
+                    ("🚀 Ready to Break Out", ready, "#00C853", "ready"),
+                    ("🔋 Building Energy", building, "#F59E0B", "building"),
+                    ("⏳ Early Stage", early, "#A78BFA", "early"),
+                ]:
+                    if items:
+                        st.markdown(f"**{section} ({len(items)})**")
+                        for r in items:
+                            sigs = " · ".join(r['signals'][:2])
+                            st.markdown(
+                                f'<div style="background:rgba(255,255,255,0.02);border:1px solid {color}33;' +
+                                f'border-radius:10px;padding:0.7rem 1rem;margin:0.3rem 0;display:flex;justify-content:space-between;">' +
+                                f'<div><span style="font-family:Syne;font-weight:800;font-size:1rem;color:#fff;">{r["ticker"]}</span>' +
+                                f' <span style="color:rgba(255,255,255,0.4);font-size:0.75rem;">${r["price"]:.2f}</span>' +
+                                f'<div style="font-size:0.72rem;color:rgba(255,255,255,0.5);margin-top:0.2rem;">{sigs}</div>' +
+                                f'<div style="font-size:0.68rem;color:rgba(255,255,255,0.35);">Resistance: ${r["resistance"]:.2f} ({r["dist_res"]:.1f}% away) · ' +
+                                f'MA50: {"✅" if r["above_ma50"] else "❌"} · MA200: {"✅" if r["above_ma200"] else "❌"}</div></div>' +
+                                f'<div style="text-align:right;"><span style="color:{color};font-weight:800;font-size:1.2rem;">{r["pb_score"]}</span>' +
+                                f'<div style="font-size:0.65rem;color:rgba(255,255,255,0.3);">score</div></div></div>',
+                                unsafe_allow_html=True
+                            )
+                            if st.button(f"Analyze {r['ticker']}", key=f"wb_{r['ticker']}", use_container_width=False):
+                                st.session_state.pro_picked = r['ticker']
+                                st.rerun()
+
+    # ════════════════════════════════════════════════════
+    # TAB 4 — SCREENER
+    # ════════════════════════════════════════════════════
+    with tab4:
+        st.markdown("#### 🎯 Stock Screener")
+        sc1,sc2,sc3 = st.columns(3)
+        sc_universe = sc1.selectbox("Universe",
+            ["dow","nasdaq100","sp500","sp400","sp600","russell2000"],
+            format_func=lambda x: {"dow":"Dow 30","nasdaq100":"NASDAQ 100","sp500":"S&P 500",
+                                   "sp400":"S&P 400","sp600":"S&P 600","russell2000":"Russell 2000"}[x],
+            key="sc_universe")
+        sc_filter = sc2.selectbox("Show",
+            ["All signals","BUY only","SELL only"],
+            key="sc_filter")
+        sc_sector = sc3.selectbox("Sector",
+            ["All Sectors","Technology","Healthcare","Financials","Consumer Discretionary",
+             "Consumer Staples","Energy","Industrials","Materials","Real Estate",
+             "Utilities","Communication Services"],
+            key="sc_sector")
+        if st.button("🚀 Run Screener", use_container_width=True, key="sc_run"):
+            tickers = get_universe(sc_universe)
+            st.info(f"Scanning {len(tickers)} stocks...")
+            prog = st.progress(0)
+            sc_results = []
+            with ThreadPoolExecutor(max_workers=10) as ex:
+                futures = {ex.submit(screen_ticker_v2, t): t for t in tickers}
+                done = 0
+                for fut in as_completed(futures):
+                    done += 1
+                    r = fut.result()
+                    if r: sc_results.append(r)
+                    prog.progress(done/len(tickers))
+            prog.empty()
+            if sc_results:
+                sc_df = pd.DataFrame(sc_results)
+                if sc_filter == "BUY only":
+                    sc_df = sc_df[sc_df['verdict'].isin(['BUY','STRONG BUY'])]
+                elif sc_filter == "SELL only":
+                    sc_df = sc_df[sc_df['verdict'].isin(['SELL','STRONG SELL'])]
+                sc_df = sc_df.sort_values('combined', ascending=False)
+                buys_sc = sc_df[sc_df['verdict'].isin(['BUY','STRONG BUY'])]
+                sells_sc = sc_df[sc_df['verdict'].isin(['SELL','STRONG SELL'])]
+                if not buys_sc.empty:
+                    st.markdown(f"**🟢 BUY signals ({len(buys_sc)})**")
+                    dd = buys_sc[['ticker','price','verdict','combined','rsi','ret_1m','ret_3m','above_ma200']].copy()
+                    dd.columns = ['Ticker','Price','Verdict','Score','RSI','1M%','3M%','MA200']
+                    st.dataframe(dd, use_container_width=True, hide_index=True)
+                if not sells_sc.empty:
+                    st.markdown(f"**🔴 SELL / AVOID ({len(sells_sc)})**")
+                    dd2 = sells_sc[['ticker','price','verdict','combined','rsi','ret_1m','ret_3m','above_ma200']].copy()
+                    dd2.columns = ['Ticker','Price','Verdict','Score','RSI','1M%','3M%','MA200']
+                    st.dataframe(dd2, use_container_width=True, hide_index=True)
+            else:
+                st.warning("No results found.")
+
+    # ════════════════════════════════════════════════════
+    # TAB 5 — BACKTEST
+    # ════════════════════════════════════════════════════
+    with tab5:
         st.markdown("Test strategy edge over random entry.")
         st.success("⚡ Pro: up to 10 years history")
         c1, c2, c3, c4 = st.columns(4)
@@ -639,3 +842,4 @@ def show_pro_dashboard(user):
 
     st.markdown("---")
     st.caption("⚠️ Educational tool only. Not financial advice. Estimates and backtests do not guarantee future results.")
+
