@@ -1381,3 +1381,337 @@ def bearish_fuel_gauge(df, lookback=20):
         "ext_pct": ext_pct,
     }
 
+
+
+# ============================================================
+# SECTION 12: FUNDAMENTALS
+# ============================================================
+
+@st.cache_data(ttl=3600)
+def get_fundamentals(ticker):
+    """
+    Παίρνει βασικά fundamentals από yfinance.
+    Cache 1 ώρα — δεν αλλάζουν συχνά.
+
+    Επιστρέφει:
+      pe_ratio      : Price/Earnings
+      eps_growth    : EPS growth YoY %
+      revenue_growth: Revenue growth YoY %
+      profit_margin : Net profit margin %
+      debt_equity   : Debt/Equity ratio
+      short_float   : % short interest
+      market_cap    : Market cap σε δισ.
+      sector        : Sector
+      industry      : Industry
+      next_earnings : Ημερομηνία επόμενων earnings
+    """
+    try:
+        tk = yf.Ticker(ticker)
+        info = tk.info
+
+        pe = info.get('trailingPE', None)
+        fpe = info.get('forwardPE', None)
+        eps_growth = info.get('earningsGrowth', None)
+        rev_growth = info.get('revenueGrowth', None)
+        profit_margin = info.get('profitMargins', None)
+        debt_equity = info.get('debtToEquity', None)
+        short_float = info.get('shortPercentOfFloat', None)
+        market_cap = info.get('marketCap', None)
+        sector = info.get('sector', 'Unknown')
+        industry = info.get('industry', 'Unknown')
+        beta = info.get('beta', None)
+        roe = info.get('returnOnEquity', None)
+        current_ratio = info.get('currentRatio', None)
+
+        # Ποιοτική αξιολόγηση
+        flags = []
+        score = 0  # -3 to +3
+
+        if pe and pe < 15:
+            flags.append("✅ Cheap PE"); score += 1
+        elif pe and pe > 50:
+            flags.append("⚠️ Expensive PE"); score -= 1
+
+        if eps_growth and eps_growth > 0.15:
+            flags.append("✅ Strong EPS growth"); score += 1
+        elif eps_growth and eps_growth < 0:
+            flags.append("🔴 Negative EPS growth"); score -= 1
+
+        if rev_growth and rev_growth > 0.10:
+            flags.append("✅ Revenue growing"); score += 1
+        elif rev_growth and rev_growth < 0:
+            flags.append("🔴 Revenue shrinking"); score -= 1
+
+        if short_float and short_float > 0.20:
+            flags.append("⚠️ High short interest"); score -= 0.5
+        elif short_float and short_float > 0.30:
+            flags.append("🔥 Short squeeze potential")
+
+        if debt_equity and debt_equity < 0.5:
+            flags.append("✅ Low debt"); score += 0.5
+        elif debt_equity and debt_equity > 2:
+            flags.append("⚠️ High debt"); score -= 0.5
+
+        return {
+            'pe':            round(pe, 1) if pe else None,
+            'forward_pe':    round(fpe, 1) if fpe else None,
+            'eps_growth':    round(eps_growth * 100, 1) if eps_growth else None,
+            'rev_growth':    round(rev_growth * 100, 1) if rev_growth else None,
+            'profit_margin': round(profit_margin * 100, 1) if profit_margin else None,
+            'debt_equity':   round(debt_equity, 2) if debt_equity else None,
+            'short_float':   round(short_float * 100, 1) if short_float else None,
+            'market_cap':    round(market_cap / 1e9, 1) if market_cap else None,
+            'beta':          round(beta, 2) if beta else None,
+            'roe':           round(roe * 100, 1) if roe else None,
+            'current_ratio': round(current_ratio, 2) if current_ratio else None,
+            'sector':        sector,
+            'industry':      industry,
+            'flags':         flags,
+            'fund_score':    score,
+        }
+    except Exception:
+        return None
+
+
+# ============================================================
+# SECTION 13: VFM SCORE (Value For Money Entry)
+# ============================================================
+
+def vfm_score(df, a=None):
+    """
+    Value For Money — Αξίζει να μπεις ΤΩΡΑ;
+
+    Μετράει πού βρίσκεσαι μέσα στο "tunnel":
+    0%  = αρχή της κίνησης (ideal entry)
+    50% = μέση (ok)
+    100% = τέλος του tunnel (πολύ αργά)
+
+    Επιστρέφει:
+      vfm_pct    : 0-100 (χαμηλότερο = καλύτερο)
+      vfm_rating : 'excellent' | 'good' | 'fair' | 'late' | 'avoid'
+      entry_zone : True αν είσαι σε καλή ζώνη
+      support    : Επίπεδο support
+      target     : Εκτιμώμενο target
+      tunnel_pct : % της κίνησης που έχει ήδη γίνει
+    """
+    if df is None or len(df) < 60:
+        return None
+
+    close = df['Close']
+    current = float(close.iloc[-1])
+
+    # Support: recent swing low (20 ημερών)
+    support = float(df['Low'].tail(20).min())
+
+    # Resistance / Target: recent swing high (52 εβδομάδων)
+    resistance = float(close.tail(252).max())
+
+    # ATR για buffer
+    atr = float(atr_calc(df).iloc[-1])
+
+    # Tunnel
+    tunnel_size = resistance - support
+    if tunnel_size <= 0:
+        return None
+
+    position_in_tunnel = (current - support) / tunnel_size * 100
+    position_in_tunnel = max(0, min(100, position_in_tunnel))
+
+    # MA50 ως dynamic support
+    ma50 = float(close.rolling(50).mean().iloc[-1])
+    near_ma50 = abs(current - ma50) / ma50 < 0.03  # εντός 3% από MA50
+
+    # Pullback check — έχει διορθώσει από recent high;
+    recent_high = float(close.tail(20).max())
+    pullback_pct = (recent_high - current) / recent_high * 100
+    has_pullback = pullback_pct >= 3  # τουλάχιστον 3% pullback
+
+    # RSI check
+    rsi_val = float(rsi(close).iloc[-1]) if a is None else a.get('rsi', 50)
+    rsi_ok = 35 < rsi_val < 65
+
+    # VFM Rating
+    if position_in_tunnel < 25 and (near_ma50 or has_pullback) and rsi_ok:
+        rating = 'excellent'
+        entry_zone = True
+    elif position_in_tunnel < 40 and rsi_ok:
+        rating = 'good'
+        entry_zone = True
+    elif position_in_tunnel < 60:
+        rating = 'fair'
+        entry_zone = False
+    elif position_in_tunnel < 80:
+        rating = 'late'
+        entry_zone = False
+    else:
+        rating = 'avoid'
+        entry_zone = False
+
+    return {
+        'vfm_pct':           round(position_in_tunnel, 1),
+        'vfm_rating':        rating,
+        'entry_zone':        entry_zone,
+        'support':           round(support, 2),
+        'resistance':        round(resistance, 2),
+        'tunnel_size':       round(tunnel_size, 2),
+        'near_ma50':         near_ma50,
+        'has_pullback':      has_pullback,
+        'pullback_pct':      round(pullback_pct, 1),
+        'rsi_ok':            rsi_ok,
+        'rsi':               round(rsi_val, 1),
+    }
+
+
+# ============================================================
+# SECTION 14: PRE-BREAKOUT DETECTION
+# ============================================================
+
+def pre_breakout_detection(df, ticker=None):
+    """
+    Εντοπίζει μετοχές που "φορτίζουν" πριν από μεγάλη κίνηση.
+
+    Ψάχνει για:
+    1. Consolidation — sideways κίνηση για 2-4 εβδομάδες
+    2. TTM Squeeze — Bollinger μέσα σε Keltner (συμπίεση)
+    3. OBV Accumulation — volume ανεβαίνει ενώ τιμή flat
+    4. Decreasing Volume — λιγότερο volume = λιγότερη πώληση
+    5. Near Resistance — κοντά στο breakout level
+
+    Επιστρέφει score 0-100 και status.
+    """
+    if df is None or len(df) < 60:
+        return None
+
+    close = df['Close']
+    volume = df['Volume']
+    current = float(close.iloc[-1])
+
+    score = 0
+    signals = []
+
+    # 1. CONSOLIDATION — τιμή sideways (χαμηλή volatility)
+    recent_20 = close.tail(20)
+    price_range = (float(recent_20.max()) - float(recent_20.min())) / float(recent_20.mean()) * 100
+    is_consolidating = price_range < 8  # εντός 8% range
+    if is_consolidating:
+        score += 25
+        signals.append(f"📦 Consolidation — {price_range:.1f}% range (20d)")
+
+    # 2. TTM SQUEEZE — BB μέσα σε KC
+    sq = squeeze_momentum(df)
+    if sq['squeeze_on']:
+        score += 30
+        signals.append("🔋 TTM Squeeze ON — energy building")
+    elif not sq['squeeze_on'] and sq['momentum_rising']:
+        score += 20
+        signals.append("🚀 Squeeze just fired — momentum rising")
+
+    # 3. OBV ACCUMULATION — OBV ανεβαίνει ενώ τιμή flat
+    obv_s = obv(df)
+    obv_now = float(obv_s.iloc[-1])
+    obv_20d = float(obv_s.iloc[-20])
+    obv_rising = obv_now > obv_20d * 1.02
+    if is_consolidating and obv_rising:
+        score += 25
+        signals.append("📈 OBV rising while price flat — accumulation")
+
+    # 4. DECREASING VOLUME in consolidation
+    vol_recent = float(volume.tail(10).mean())
+    vol_prev = float(volume.tail(30).head(20).mean())
+    vol_decreasing = vol_recent < vol_prev * 0.8
+    if is_consolidating and vol_decreasing:
+        score += 10
+        signals.append("📉 Volume drying up — sellers exhausted")
+
+    # 5. NEAR RESISTANCE — κοντά στο breakout level
+    resistance = float(close.tail(52).max())
+    dist_from_resistance = (resistance - current) / resistance * 100
+    near_resistance = dist_from_resistance < 5
+    if near_resistance:
+        score += 10
+        signals.append(f"🎯 Near resistance ${resistance:.2f} ({dist_from_resistance:.1f}% away)")
+
+    # Status
+    if score >= 70:
+        status = 'ready'       # Έτοιμο για breakout
+    elif score >= 45:
+        status = 'building'    # Χτίζει ενέργεια
+    elif score >= 20:
+        status = 'early'       # Πολύ νωρίς
+    else:
+        status = 'none'        # Τίποτα
+
+    return {
+        'score':            score,
+        'status':           status,
+        'signals':          signals,
+        'is_consolidating': is_consolidating,
+        'price_range_pct':  round(price_range, 1),
+        'squeeze_on':       sq['squeeze_on'],
+        'obv_rising':       obv_rising,
+        'vol_decreasing':   vol_decreasing,
+        'near_resistance':  near_resistance,
+        'resistance':       round(resistance, 2),
+        'dist_resistance':  round(dist_from_resistance, 1),
+    }
+
+
+@st.cache_data(ttl=1800)
+def scan_pre_breakouts(universe='sp500', top_n=20):
+    """
+    Σκανάρει ένα universe για pre-breakout setups.
+    Cache 30 λεπτά.
+    """
+    tickers = get_universe(universe)
+    results = []
+
+    def check_ticker(ticker):
+        try:
+            df = yf.download(ticker, period='6mo', progress=False,
+                             auto_adjust=True, threads=False)
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            if df.empty or len(df) < 60:
+                return None
+
+            current = float(df['Close'].iloc[-1])
+            avg_vol = float(df['Volume'].tail(20).mean())
+
+            # Φίλτρα
+            if current < 5 or avg_vol < 100_000:
+                return None
+
+            pb = pre_breakout_detection(df, ticker)
+            if pb is None or pb['status'] == 'none':
+                return None
+
+            # Βασική ανάλυση για context
+            ma50 = float(df['Close'].rolling(50).mean().iloc[-1])
+            ma200 = float(df['Close'].rolling(200).mean().iloc[-1]) if len(df) >= 200 else None
+
+            return {
+                'ticker':       ticker,
+                'price':        round(current, 2),
+                'pb_score':     pb['score'],
+                'status':       pb['status'],
+                'signals':      pb['signals'],
+                'squeeze':      pb['squeeze_on'],
+                'consolidating': pb['is_consolidating'],
+                'obv_rising':   pb['obv_rising'],
+                'resistance':   pb['resistance'],
+                'dist_res':     pb['dist_resistance'],
+                'above_ma50':   current > ma50,
+                'above_ma200':  current > ma200 if ma200 else False,
+            }
+        except Exception:
+            return None
+
+    with ThreadPoolExecutor(max_workers=10) as ex:
+        futures = {ex.submit(check_ticker, t): t for t in tickers}
+        for f in as_completed(futures):
+            r = f.result()
+            if r:
+                results.append(r)
+
+    results.sort(key=lambda x: x['pb_score'], reverse=True)
+    return results[:top_n]
